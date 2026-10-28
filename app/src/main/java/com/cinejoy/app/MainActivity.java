@@ -1,12 +1,12 @@
 package com.cinejoy.app;
 
 import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.content.Intent;
+import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Message;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
@@ -15,15 +15,17 @@ import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
-import android.webkit.WebResourceError;
 
-public class MainActivity extends Activity {
+import androidx.appcompat.app.AppCompatActivity;
+
+public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private ProgressBar progressBar;
@@ -53,13 +55,13 @@ public class MainActivity extends Activity {
 
         // Root layout
         RelativeLayout rootLayout = new RelativeLayout(this);
-        rootLayout.setBackgroundColor(0xFF050505); // Cinejoy dark background
+        rootLayout.setBackgroundColor(Color.parseColor("#050505"));
 
         // Progress bar
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
-        progressBar.setProgressTintList(android.content.res.ColorStateList.valueOf(0xFF95FF50));
-        progressBar.setBackgroundColor(0xFF050505);
+        progressBar.setProgressTintList(ColorStateList.valueOf(Color.parseColor("#95FF50")));
+        progressBar.setBackgroundColor(Color.parseColor("#050505"));
         RelativeLayout.LayoutParams pbParams = new RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.MATCH_PARENT, 8);
         pbParams.addRule(RelativeLayout.ALIGN_PARENT_TOP);

@@ -2,17 +2,22 @@ package com.cinejoy.app;
 
 import android.annotation.SuppressLint;
 import android.content.Intent;
+import android.content.pm.ActivityInfo;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.net.Uri;
+import android.net.http.SslError;
 import android.os.Bundle;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
+import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
@@ -20,6 +25,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 
@@ -29,6 +35,10 @@ public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private ProgressBar progressBar;
+    private FrameLayout customViewContainer;
+    private View customView;
+    private WebChromeClient.CustomViewCallback customViewCallback;
+
     private static final String TARGET_URL = "https://cinejoy.pk/";
     private ValueCallback<Uri[]> filePathCallback;
     private static final int FILE_CHOOSER_REQUEST_CODE = 100;
@@ -38,34 +48,15 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Fullscreen immersive mode
-        requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(
-            WindowManager.LayoutParams.FLAG_FULLSCREEN,
-            WindowManager.LayoutParams.FLAG_FULLSCREEN
-        );
-        getWindow().getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        );
+        // Keep screen on for movies
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
-        // Root layout
+        // Immersive sticky fullscreen mode
+        hideSystemUI();
+
+        // Root container
         RelativeLayout rootLayout = new RelativeLayout(this);
         rootLayout.setBackgroundColor(Color.parseColor("#050505"));
-
-        // Progress bar
-        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
-        progressBar.setMax(100);
-        progressBar.setProgressTintList(ColorStateList.valueOf(Color.parseColor("#95FF50")));
-        progressBar.setBackgroundColor(Color.parseColor("#050505"));
-        RelativeLayout.LayoutParams pbParams = new RelativeLayout.LayoutParams(
-            RelativeLayout.LayoutParams.MATCH_PARENT, 8);
-        pbParams.addRule(RelativeLayout.ALIGN_PARENT_TOP);
-        progressBar.setLayoutParams(pbParams);
 
         // WebView
         webView = new WebView(this);
@@ -73,12 +64,33 @@ public class MainActivity extends AppCompatActivity {
             RelativeLayout.LayoutParams.MATCH_PARENT,
             RelativeLayout.LayoutParams.MATCH_PARENT);
         webView.setLayoutParams(wvParams);
+        webView.setBackgroundColor(Color.parseColor("#050505"));
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+
+        // Progress bar
+        progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        progressBar.setMax(100);
+        progressBar.setProgressTintList(ColorStateList.valueOf(Color.parseColor("#95FF50")));
+        progressBar.setBackgroundColor(Color.TRANSPARENT);
+        RelativeLayout.LayoutParams pbParams = new RelativeLayout.LayoutParams(
+            RelativeLayout.LayoutParams.MATCH_PARENT, 8);
+        pbParams.addRule(RelativeLayout.ALIGN_PARENT_TOP);
+        progressBar.setLayoutParams(pbParams);
+
+        // Container for full screen video playback
+        customViewContainer = new FrameLayout(this);
+        customViewContainer.setLayoutParams(new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT));
+        customViewContainer.setBackgroundColor(Color.BLACK);
+        customViewContainer.setVisibility(View.GONE);
 
         rootLayout.addView(webView);
         rootLayout.addView(progressBar);
+        rootLayout.addView(customViewContainer);
         setContentView(rootLayout);
 
-        // WebView Settings
+        // Configure WebSettings for maximum compatibility with SPAs, DDoS-Guard & Video Players
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -86,44 +98,47 @@ public class MainActivity extends AppCompatActivity {
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(true);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setSupportMultipleWindows(false);
+        settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-        settings.setUserAgentString(
-            "Mozilla/5.0 (Linux; Android 13; Pixel 7) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/118.0.0.0 Mobile Safari/537.36"
-        );
 
-        // Enable cookies
-        CookieManager.getInstance().setAcceptCookie(true);
-        CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true);
+        // Fix Anti-bot / DDoS-Guard detection:
+        // Use device's native User-Agent but remove '; wv' to appear as full Chrome without version mismatch
+        String defaultUa = settings.getUserAgentString();
+        if (defaultUa != null) {
+            String cleanUa = defaultUa.replace("; wv", "");
+            settings.setUserAgentString(cleanUa);
+        }
 
-        // WebViewClient - handle navigation
+        // Cookie management
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        cookieManager.setAcceptThirdPartyCookies(webView, true);
+
+        // WebViewClient
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // Keep cinejoy.pk links inside the app
-                if (url.contains("cinejoy.pk") || url.contains("cinejoy.to")) {
+                // Allow all HTTP/HTTPS navigation (including external streaming video servers) inside WebView
+                if (url.startsWith("http://") || url.startsWith("https://")) {
                     return false;
                 }
-                // Open external links in browser
+                // Only launch external apps for schemes like mailto, tel, intent, market, etc.
                 try {
                     Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
                     startActivity(intent);
-                } catch (Exception e) {
-                    // Ignore
-                }
+                } catch (Exception ignored) {}
                 return true;
             }
 
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 progressBar.setVisibility(View.VISIBLE);
-                progressBar.setProgress(0);
+                progressBar.setProgress(10);
             }
 
             @Override
@@ -133,46 +148,93 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
-            public void onReceivedError(WebView view, WebResourceRequest request,
-                                        WebResourceError error) {
+            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                // Ignore SSL errors from CDN / proxies so video players don't stay blank
+                handler.proceed();
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request.isForMainFrame()) {
-                    view.loadUrl("about:blank");
-                    view.loadData(getErrorPage(), "text/html", "UTF-8");
+                    progressBar.setVisibility(View.GONE);
                 }
             }
         });
 
-        // WebChromeClient - handle progress + file chooser
+        // WebChromeClient: Progress, Fullscreen Video, and File Chooser
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 progressBar.setProgress(newProgress);
-                if (newProgress == 100) {
+                if (newProgress >= 100) {
                     progressBar.setVisibility(View.GONE);
                 }
+            }
+
+            @Override
+            public void onShowCustomView(View view, CustomViewCallback callback) {
+                // When user taps Fullscreen on any video player
+                if (customView != null) {
+                    onHideCustomView();
+                    return;
+                }
+                customView = view;
+                customViewCallback = callback;
+                webView.setVisibility(View.GONE);
+                customViewContainer.setVisibility(View.VISIBLE);
+                customViewContainer.addView(view);
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
+                hideSystemUI();
+            }
+
+            @Override
+            public void onHideCustomView() {
+                if (customView == null) return;
+                customViewContainer.removeView(customView);
+                customView = null;
+                customViewContainer.setVisibility(View.GONE);
+                webView.setVisibility(View.VISIBLE);
+                if (customViewCallback != null) {
+                    customViewCallback.onCustomViewHidden();
+                    customViewCallback = null;
+                }
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+                hideSystemUI();
             }
 
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
                                              FileChooserParams fileChooserParams) {
                 MainActivity.this.filePathCallback = filePathCallback;
-                Intent intent = fileChooserParams.createIntent();
-                startActivityForResult(intent, FILE_CHOOSER_REQUEST_CODE);
+                try {
+                    Intent intent = fileChooserParams.createIntent();
+                    startActivityForResult(intent, FILE_CHOOSER_REQUEST_CODE);
+                    return true;
+                } catch (Exception e) {
+                    MainActivity.this.filePathCallback = null;
+                    return false;
+                }
+            }
+
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
                 return true;
             }
         });
 
-        // Download listener
+        // Downloads
         webView.setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition,
                                         String mimetype, long contentLength) {
-                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                startActivity(intent);
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    startActivity(intent);
+                } catch (Exception ignored) {}
             }
         });
 
-        // Load the site
+        // Load CineJoy
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState);
         } else {
@@ -180,27 +242,40 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-    private String getErrorPage() {
-        return "<!DOCTYPE html><html><head><meta charset='utf-8'>" +
-            "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
-            "<style>body{background:#050505;color:#fff;font-family:Inter,sans-serif;" +
-            "display:flex;flex-direction:column;align-items:center;justify-content:center;" +
-            "height:100vh;margin:0;text-align:center;}" +
-            "h1{color:#95FF50;font-size:48px;margin:0;}p{color:#aaa;margin-top:16px;}" +
-            "button{margin-top:32px;background:#95FF50;color:#000;border:none;" +
-            "padding:14px 28px;border-radius:24px;font-size:16px;font-weight:700;cursor:pointer;}" +
-            "</style></head><body>" +
-            "<h1>📡</h1><h2>لا يوجد اتصال بالإنترنت</h2>" +
-            "<p>يرجى التحقق من اتصالك وإعادة المحاولة</p>" +
-            "<button onclick='location.reload()'>إعادة المحاولة</button>" +
-            "</body></html>";
+    private void hideSystemUI() {
+        View decorView = getWindow().getDecorView();
+        decorView.setSystemUiVisibility(
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+            View.SYSTEM_UI_FLAG_FULLSCREEN |
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideSystemUI();
+        }
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK && webView.canGoBack()) {
-            webView.goBack();
-            return true;
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (customView != null) {
+                // Exit fullscreen video first if active
+                if (webView.getWebChromeClient() != null) {
+                    ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
+                }
+                return true;
+            }
+            if (webView.canGoBack()) {
+                webView.goBack();
+                return true;
+            }
         }
         return super.onKeyDown(keyCode, event);
     }
@@ -220,12 +295,14 @@ public class MainActivity extends AppCompatActivity {
                 filePathCallback = null;
             }
         }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         if (webView != null) webView.onResume();
+        hideSystemUI();
     }
 
     @Override

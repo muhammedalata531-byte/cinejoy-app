@@ -1,0 +1,3 @@
+-keep class com.cinejoy.app.** { *; }
+-keepattributes *Annotation*
+-dontwarn okhttp3.**

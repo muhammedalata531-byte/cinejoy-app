@@ -48,7 +48,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Keep screen on for movies
+        // Keep screen on for movies & TV displays
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         // Immersive sticky fullscreen mode
@@ -58,7 +58,7 @@ public class MainActivity extends AppCompatActivity {
         RelativeLayout rootLayout = new RelativeLayout(this);
         rootLayout.setBackgroundColor(Color.parseColor("#050505"));
 
-        // WebView
+        // WebView with focus and hardware acceleration for Android TV & Mobile
         webView = new WebView(this);
         RelativeLayout.LayoutParams wvParams = new RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.MATCH_PARENT,
@@ -66,6 +66,9 @@ public class MainActivity extends AppCompatActivity {
         webView.setLayoutParams(wvParams);
         webView.setBackgroundColor(Color.parseColor("#050505"));
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
+        webView.setFocusable(true);
+        webView.setFocusableInTouchMode(true);
+        webView.requestFocus();
 
         // Progress bar
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -104,6 +107,9 @@ public class MainActivity extends AppCompatActivity {
         settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+
+        // Optimize font scaling for large smart TV screens
+        settings.setTextZoom(100);
 
         // Fix Anti-bot / DDoS-Guard detection:
         // Use device's native User-Agent but remove '; wv' to appear as full Chrome without version mismatch
@@ -145,6 +151,8 @@ public class MainActivity extends AppCompatActivity {
             public void onPageFinished(WebView view, String url) {
                 progressBar.setVisibility(View.GONE);
                 CookieManager.getInstance().flush();
+                // Auto focus webview so TV remote keys work immediately
+                webView.requestFocus();
             }
 
             @Override
@@ -200,6 +208,7 @@ public class MainActivity extends AppCompatActivity {
                 }
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
                 hideSystemUI();
+                webView.requestFocus();
             }
 
             @Override
@@ -259,23 +268,56 @@ public class MainActivity extends AppCompatActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             hideSystemUI();
+            if (webView != null) webView.requestFocus();
         }
     }
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
-            if (customView != null) {
-                // Exit fullscreen video first if active
-                if (webView.getWebChromeClient() != null) {
-                    ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
+        // Android TV Remote Media Controls
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "(function() { var v = document.querySelector('video'); if (v) { if (v.paused) v.play(); else v.pause(); } })()",
+                        null
+                    );
+                    return true;
                 }
-                return true;
-            }
-            if (webView.canGoBack()) {
-                webView.goBack();
-                return true;
-            }
+                break;
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime += 10; })()",
+                        null
+                    );
+                    return true;
+                }
+                break;
+            case KeyEvent.KEYCODE_MEDIA_REWIND:
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime -= 10; })()",
+                        null
+                    );
+                    return true;
+                }
+                break;
+            case KeyEvent.KEYCODE_BACK:
+                if (customView != null) {
+                    // Exit fullscreen video first if active
+                    if (webView != null && webView.getWebChromeClient() != null) {
+                        ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
+                    }
+                    return true;
+                }
+                if (webView != null && webView.canGoBack()) {
+                    webView.goBack();
+                    return true;
+                }
+                break;
         }
         return super.onKeyDown(keyCode, event);
     }
@@ -301,7 +343,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
-        if (webView != null) webView.onResume();
+        if (webView != null) {
+            webView.onResume();
+            webView.requestFocus();
+        }
         hideSystemUI();
     }
 

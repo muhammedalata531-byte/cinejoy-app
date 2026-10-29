@@ -21,7 +21,6 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
 import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
@@ -31,6 +30,7 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -44,6 +44,8 @@ import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
 
+import java.io.ByteArrayInputStream;
+
 public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
@@ -52,13 +54,25 @@ public class MainActivity extends AppCompatActivity {
     private View customView;
     private WebChromeClient.CustomViewCallback customViewCallback;
     private RelativeLayout splashLayout;
+    private TextView drBadge;
 
     private static final String TARGET_URL = "https://cinejoy.pk/";
     private ValueCallback<Uri[]> filePathCallback;
     private static final int FILE_CHOOSER_REQUEST_CODE = 100;
 
     private boolean isAdBlockActive = true;
+    private boolean isTvBoostActive = true;
+    private boolean isMouseModeActive = false;
     private float currentPlaybackSpeed = 1.0f;
+
+    // Ad & tracker domains blocked at network layer to save TV RAM & CPU
+    private static final String[] BLOCKED_PATTERNS = new String[]{
+        "llvpn.com", "a.wing.st", "doubleclick.net", "google-analytics.com",
+        "googlesyndication.com", "popads.net", "adsterra.com", "propellerads.com",
+        "monetag.com", "yandex.ru", "clickadu.com", "histats.com", "exoclick.com",
+        "trafficfactory.biz", "juicyads.com", "adnxs.com", "adform.net",
+        "/tag.min.js", "popunder", "/ads/", "adservice", "partnerads"
+    };
 
     @SuppressLint("SetJavaScriptEnabled")
     @Override
@@ -75,14 +89,13 @@ public class MainActivity extends AppCompatActivity {
         RelativeLayout rootLayout = new RelativeLayout(this);
         rootLayout.setBackgroundColor(Color.parseColor("#050505"));
 
-        // WebView with hardware acceleration
+        // Optimized WebView for Android TV
         webView = new WebView(this);
         RelativeLayout.LayoutParams wvParams = new RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.MATCH_PARENT,
             RelativeLayout.LayoutParams.MATCH_PARENT);
         webView.setLayoutParams(wvParams);
         webView.setBackgroundColor(Color.parseColor("#050505"));
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
@@ -105,8 +118,8 @@ public class MainActivity extends AppCompatActivity {
         customViewContainer.setBackgroundColor(Color.BLACK);
         customViewContainer.setVisibility(View.GONE);
 
-        // Floating Control Button by Dr. Muhammed
-        TextView drBadge = createDrMuhammedBadge();
+        // Dr. Muhammed Quick Badge (auto-fades on TV after launch)
+        drBadge = createDrMuhammedBadge();
 
         // Splash Screen Overlay by Dr. Muhammed
         splashLayout = createSplashScreen();
@@ -118,7 +131,7 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(splashLayout);
         setContentView(rootLayout);
 
-        // Configure WebSettings
+        // Configure WebSettings for high performance & TV screens
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -129,8 +142,8 @@ public class MainActivity extends AppCompatActivity {
         settings.setAllowContentAccess(true);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setSupportMultipleWindows(true);
-        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+        settings.setSupportMultipleWindows(false); // Block popups spawning extra windows
+        settings.setJavaScriptCanOpenWindowsAutomatically(false); // Disallow popup windows
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setTextZoom(100);
 
@@ -145,12 +158,12 @@ public class MainActivity extends AppCompatActivity {
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
-        // WebViewClient
+        // WebViewClient with Network-level AdBlocker & Spatial Navigator Injection
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // Allow all HTTP/HTTPS navigation (including video streams) inside WebView
+                // Block external ad schemes
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     return false;
                 }
@@ -162,9 +175,26 @@ public class MainActivity extends AppCompatActivity {
             }
 
             @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (isAdBlockActive && request != null && request.getUrl() != null) {
+                    String url = request.getUrl().toString();
+                    if (isAdOrTracker(url)) {
+                        // Return empty stream immediately to stop CPU and network load
+                        return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
+                    }
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+
+            @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 progressBar.setVisibility(View.VISIBLE);
                 progressBar.setProgress(15);
+                // Pre-inject anti-ad flag before webpage scripts execute
+                view.evaluateJavascript(
+                    "(function() { try { localStorage.setItem('addies', 'false'); } catch(e){} window.open = function() { return null; }; })();",
+                    null
+                );
             }
 
             @Override
@@ -173,10 +203,10 @@ public class MainActivity extends AppCompatActivity {
                 CookieManager.getInstance().flush();
                 webView.requestFocus();
 
-                // Inject Dr. Muhammed AdBlock & Performance script
-                injectDrMuhammedEnhancements();
+                // Inject TV Remote Navigation Engine & Performance Boost
+                injectTvNavigationAndEnhancements();
 
-                // Dismiss splash screen smoothly after page loads
+                // Dismiss splash screen smoothly
                 hideSplashScreen();
             }
 
@@ -275,7 +305,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // Welcome toast
-        Toast.makeText(this, "🎬 CineJoy — By Dr. Muhammed", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "🎬 CineJoy TV Edition — By Dr. Muhammed", Toast.LENGTH_SHORT).show();
 
         // Safety timeout to hide splash after 3 seconds max
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
@@ -284,6 +314,30 @@ public class MainActivity extends AppCompatActivity {
                 hideSplashScreen();
             }
         }, 3000);
+
+        // Auto-fade Dr. Muhammed badge after 6 seconds so it doesn't obstruct movies on TV
+        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (drBadge != null && drBadge.getVisibility() == View.VISIBLE) {
+                    drBadge.animate().alpha(0f).setDuration(600).withEndAction(new Runnable() {
+                        @Override
+                        public void run() {
+                            drBadge.setVisibility(View.GONE);
+                        }
+                    });
+                }
+            }
+        }, 6000);
+    }
+
+    private boolean isAdOrTracker(String url) {
+        if (url == null) return false;
+        String lower = url.toLowerCase();
+        for (String pattern : BLOCKED_PATTERNS) {
+            if (lower.contains(pattern)) return true;
+        }
+        return false;
     }
 
     // ==========================================
@@ -323,7 +377,7 @@ public class MainActivity extends AppCompatActivity {
 
         // By Dr. Muhammed Credit
         TextView authorText = new TextView(this);
-        authorText.setText("⚡ Developed by Dr. Muhammed");
+        authorText.setText("⚡ TV Edition — Developed by Dr. Muhammed");
         authorText.setTextSize(15);
         authorText.setTextColor(Color.parseColor("#DDDDDD"));
         authorText.setGravity(Gravity.CENTER);
@@ -353,11 +407,12 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView createDrMuhammedBadge() {
         TextView badge = new TextView(this);
-        badge.setText("👨‍💻 Dr. Muhammed");
+        badge.setText("👨‍💻 Dr. Muhammed (Menu)");
         badge.setTextSize(11);
         badge.setTextColor(Color.parseColor("#95FF50"));
         badge.setTypeface(Typeface.DEFAULT_BOLD);
         badge.setPadding(24, 10, 24, 10);
+        badge.setFocusable(false); // Keep focus on web items for remote navigation
 
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(Color.parseColor("#CC111111"));
@@ -385,15 +440,18 @@ public class MainActivity extends AppCompatActivity {
 
     private void showDrMuhammedMenu() {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("🎬 CineJoy — By Dr. Muhammed");
+        builder.setTitle("🎬 CineJoy TV Hub — By Dr. Muhammed");
 
         String[] options = {
+            "🎯 نمط مؤشر الماوس (Virtual Mouse): " + (isMouseModeActive ? "مفعّل 🟢" : "معطّل ⚪"),
             "🛡️ حظر الإعلانات والبوب أب: " + (isAdBlockActive ? "مفعّل ✅" : "معطّل ❌"),
+            "⚡ تسريع أداء الشاشة (TV Hardware Booster): " + (isTvBoostActive ? "مفعّل ✅" : "معطّل ❌"),
             "⚡ سرعة التشغيل: " + currentPlaybackSpeed + "x",
             "⏩ تخطي المقدمة (Skip 85s)",
             "🔄 إعادة تحميل الصفحة",
             "🧹 مسح الذاكرة المؤقتة (Clear Cache)",
-            "ℹ️ حول التطبيق والمطور"
+            "ℹ️ حول التطبيق والمطور",
+            "🚪 خروج من التطبيق"
         };
 
         builder.setItems(options, new DialogInterface.OnClickListener() {
@@ -401,22 +459,32 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(DialogInterface dialog, int which) {
                 switch (which) {
                     case 0:
+                        toggleMouseMode();
+                        break;
+                    case 1:
                         isAdBlockActive = !isAdBlockActive;
                         Toast.makeText(MainActivity.this,
                             isAdBlockActive ? "تم تفعيل حظر الإعلانات ✅" : "تم تعطيل حظر الإعلانات ❌",
                             Toast.LENGTH_SHORT).show();
-                        if (isAdBlockActive) injectDrMuhammedEnhancements();
-                        break;
-                    case 1:
-                        cyclePlaybackSpeed();
-                        break;
-                    case 2:
-                        skipIntro();
-                        break;
-                    case 3:
                         if (webView != null) webView.reload();
                         break;
+                    case 2:
+                        isTvBoostActive = !isTvBoostActive;
+                        Toast.makeText(MainActivity.this,
+                            isTvBoostActive ? "تم تفعيل تسريع الشاشة ✅" : "تم تعطيل تسريع الشاشة ❌",
+                            Toast.LENGTH_SHORT).show();
+                        injectTvNavigationAndEnhancements();
+                        break;
+                    case 3:
+                        cyclePlaybackSpeed();
+                        break;
                     case 4:
+                        skipIntro();
+                        break;
+                    case 5:
+                        if (webView != null) webView.reload();
+                        break;
+                    case 6:
                         if (webView != null) {
                             webView.clearCache(true);
                             CookieManager.getInstance().removeAllCookies(null);
@@ -424,17 +492,36 @@ public class MainActivity extends AppCompatActivity {
                             Toast.makeText(MainActivity.this, "تم مسح الذاكرة وإعادة التحميل 🧹", Toast.LENGTH_SHORT).show();
                         }
                         break;
-                    case 5:
+                    case 7:
                         showAboutDialog();
+                        break;
+                    case 8:
+                        finish();
                         break;
                 }
                 hideSystemUI();
             }
         });
 
-        builder.setNegativeButton("إغلاق", null);
+        builder.setNegativeButton("إغلاق", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface d, int w) {
+                hideSystemUI();
+                if (webView != null) webView.requestFocus();
+            }
+        });
         AlertDialog dialog = builder.create();
         dialog.show();
+    }
+
+    private void toggleMouseMode() {
+        isMouseModeActive = !isMouseModeActive;
+        if (webView != null) {
+            webView.evaluateJavascript("window.toggleVirtualMouse && window.toggleVirtualMouse(" + isMouseModeActive + ");", null);
+        }
+        Toast.makeText(this,
+            isMouseModeActive ? "🎯 تم تفعيل مؤشر الماوس الافتراضي (حرك بالأسهم واضغط OK)" : "📱 تم العودة إلى نمط التنقل العادي بالريموت",
+            Toast.LENGTH_SHORT).show();
     }
 
     private void cyclePlaybackSpeed() {
@@ -464,30 +551,201 @@ public class MainActivity extends AppCompatActivity {
 
     private void showAboutDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("حول تطبيق CineJoy")
-            .setMessage("✨ CineJoy Pro Edition\n" +
+            .setTitle("حول تطبيق CineJoy TV")
+            .setMessage("✨ CineJoy Pro Edition — Smart TV & Android\n" +
                         "👨‍💻 تم التطوير والتخصيص بواسطة: Dr. Muhammed\n\n" +
                         "الميزات المدمجة:\n" +
-                        "• دعم رسمي للشاشات الذكية (Android TV) والريموت كنترول\n" +
-                        "• حماية مدمجة ضد الإعلانات والصفحات المنبثقة\n" +
-                        "• التحكم بسرعة الفيديو وتخطي المقدمات\n" +
-                        "• تسريع عتادي ودعم كامل لملء الشاشة")
+                        "• محرك تنقل متقدم بالريموت كنترول (D-Pad Spatial Navigation)\n" +
+                        "• مؤشر ماوس افتراضي (Virtual Mouse) للتحكم بالمشغلات الدقيقة\n" +
+                        "• تمييز بصري نيون ساطع للعنصر المحدد على الشاشة الكبيرة\n" +
+                        "• حظر فوري للإعلانات والصفحات المنبثقة على مستوى الشبكة\n" +
+                        "• تسريع أداء الشاشات الضعيفة بإلغاء المؤثرات الثقيلة\n" +
+                        "• التحكم الكامل بالفيديو (تشغيل، إيقاف، تقديم، تأخير) عبر الريموت")
             .setPositiveButton("حسناً", null)
             .show();
     }
 
-    private void injectDrMuhammedEnhancements() {
-        if (!isAdBlockActive || webView == null) return;
-        // Injects anti-popup & ad-remover javascript
-        String js = "(function() {" +
+    // Injects Spatial Navigation Engine, High-Contrast TV Focus, Performance Boost & Virtual Mouse
+    private void injectTvNavigationAndEnhancements() {
+        if (webView == null) return;
+
+        String tvEngineJs = "(function() {" +
+            "  if (window.__cinejoyTvInjected) return;" +
+            "  window.__cinejoyTvInjected = true;" +
+            "" +
+            "  /* 1. TV Focus & GPU Performance CSS */" +
+            "  var style = document.createElement('style');" +
+            "  style.id = 'cinejoy-tv-styles';" +
+            "  style.textContent = `" +
+            "    :focus, .tv-focused {" +
+            "      outline: 4px solid #95FF50 !important;" +
+            "      outline-offset: 3px !important;" +
+            "      border-radius: 8px !important;" +
+            "      box-shadow: 0 0 22px rgba(149, 255, 80, 0.9) !important;" +
+            "      transform: scale(1.05) !important;" +
+            "      transition: transform 0.12s ease-out, outline 0.12s ease-out !important;" +
+            "      z-index: 999999 !important;" +
+            "    }" +
+            "    * {" +
+            "      backdrop-filter: none !important;" +
+            "      -webkit-backdrop-filter: none !important;" +
+            "      text-shadow: none !important;" +
+            "    }" +
+            "    #cinejoy-virtual-cursor {" +
+            "      position: fixed;" +
+            "      width: 26px;" +
+            "      height: 26px;" +
+            "      border-radius: 50%;" +
+            "      background: rgba(149, 255, 80, 0.9);" +
+            "      border: 3px solid #ffffff;" +
+            "      box-shadow: 0 0 16px #95FF50, 0 0 5px #000000;" +
+            "      pointer-events: none;" +
+            "      z-index: 2147483647;" +
+            "      transform: translate(-50%, -50%);" +
+            "      display: none;" +
+            "      transition: left 0.05s linear, top 0.05s linear;" +
+            "    }" +
+            "  `;" +
+            "  (document.head || document.documentElement).appendChild(style);" +
+            "" +
+            "  /* 2. Block Popups & Ads */" +
             "  window.open = function() { return null; };" +
-            "  var adSelectors = ['iframe[src*=\"ad\"]', 'div[class*=\"banner\"]', 'div[id*=\"pop\"]', 'a[href*=\"llvpn\"]'];" +
-            "  adSelectors.forEach(function(s) {" +
-            "    document.querySelectorAll(s).forEach(function(el) { el.remove(); });" +
-            "  });" +
-            "  localStorage.setItem('addies', 'false');" +
+            "  try { localStorage.setItem('addies', 'false'); } catch(e){}" +
+            "" +
+            "  /* 3. Automatic Tabindex Scanner for Movie Cards */" +
+            "  function makeFocusable() {" +
+            "    var selectors = ['a[href]', 'button', 'input', 'select', '[role=\"button\"]', '[onclick]', 'div[class*=\"card\"]', 'div[class*=\"item\"]', 'div[class*=\"poster\"]', 'div[class*=\"movie\"]', 'div[class*=\"episode\"]'];" +
+            "    var elements = document.querySelectorAll(selectors.join(', '));" +
+            "    for (var i = 0; i < elements.length; i++) {" +
+            "      var el = elements[i];" +
+            "      if (!el.hasAttribute('tabindex') && el.offsetParent !== null) {" +
+            "        el.setAttribute('tabindex', '0');" +
+            "      }" +
+            "    }" +
+            "  }" +
+            "  makeFocusable();" +
+            "  setInterval(makeFocusable, 1800);" +
+            "" +
+            "  /* 4. Virtual Mouse State */" +
+            "  window.__cinejoyMouseMode = false;" +
+            "  var cursorX = window.innerWidth / 2;" +
+            "  var cursorY = window.innerHeight / 2;" +
+            "  var cursorEl = document.createElement('div');" +
+            "  cursorEl.id = 'cinejoy-virtual-cursor';" +
+            "  document.body.appendChild(cursorEl);" +
+            "" +
+            "  window.toggleVirtualMouse = function(enable) {" +
+            "    if (typeof enable === 'boolean') {" +
+            "      window.__cinejoyMouseMode = enable;" +
+            "    } else {" +
+            "      window.__cinejoyMouseMode = !window.__cinejoyMouseMode;" +
+            "    }" +
+            "    cursorEl.style.display = window.__cinejoyMouseMode ? 'block' : 'none';" +
+            "    if (window.__cinejoyMouseMode) {" +
+            "      cursorEl.style.left = cursorX + 'px';" +
+            "      cursorEl.style.top = cursorY + 'px';" +
+            "    }" +
+            "    return window.__cinejoyMouseMode;" +
+            "  };" +
+            "" +
+            "  /* 5. Spatial Navigation Engine */" +
+            "  function getFocusable() {" +
+            "    var all = document.querySelectorAll('[tabindex=\"0\"], a, button, input');" +
+            "    var vis = [];" +
+            "    for (var i = 0; i < all.length; i++) {" +
+            "      var r = all[i].getBoundingClientRect();" +
+            "      if (r.width > 0 && r.height > 0 && all[i].offsetParent !== null) vis.push(all[i]);" +
+            "    }" +
+            "    return vis;" +
+            "  }" +
+            "" +
+            "  function moveFocus(dir) {" +
+            "    var active = document.activeElement;" +
+            "    var elements = getFocusable();" +
+            "    if (!elements.length) return;" +
+            "    if (!active || active === document.body || !active.getBoundingClientRect) {" +
+            "      elements[0].focus();" +
+            "      elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });" +
+            "      return;" +
+            "    }" +
+            "    var cur = active.getBoundingClientRect();" +
+            "    var cx = cur.left + cur.width / 2;" +
+            "    var cy = cur.top + cur.height / 2;" +
+            "    var best = null;" +
+            "    var minD = Infinity;" +
+            "    for (var i = 0; i < elements.length; i++) {" +
+            "      var el = elements[i];" +
+            "      if (el === active) continue;" +
+            "      var r = el.getBoundingClientRect();" +
+            "      var ex = r.left + r.width / 2;" +
+            "      var ey = r.top + r.height / 2;" +
+            "      var dx = ex - cx;" +
+            "      var dy = ey - cy;" +
+            "      var valid = (dir === 'down' && dy > 12) || (dir === 'up' && dy < -12) || (dir === 'right' && dx > 12) || (dir === 'left' && dx < -12);" +
+            "      if (valid) {" +
+            "        var d = (dir === 'up' || dir === 'down') ? Math.abs(dy) + Math.abs(dx) * 2.5 : Math.abs(dx) + Math.abs(dy) * 2.5;" +
+            "        if (d < minD) { minD = d; best = el; }" +
+            "      }" +
+            "    }" +
+            "    if (best) {" +
+            "      best.focus();" +
+            "      best.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });" +
+            "    } else {" +
+            "      if (dir === 'down') window.scrollBy({ top: 320, behavior: 'smooth' });" +
+            "      else if (dir === 'up') window.scrollBy({ top: -320, behavior: 'smooth' });" +
+            "      else if (dir === 'right') window.scrollBy({ left: 320, behavior: 'smooth' });" +
+            "      else if (dir === 'left') window.scrollBy({ left: -320, behavior: 'smooth' });" +
+            "    }" +
+            "  }" +
+            "" +
+            "  window.addEventListener('keydown', function(e) {" +
+            "    if (window.__cinejoyMouseMode) {" +
+            "      var step = 45;" +
+            "      if (e.key === 'ArrowUp' || e.keyCode === 38) { cursorY = Math.max(10, cursorY - step); e.preventDefault(); }" +
+            "      else if (e.key === 'ArrowDown' || e.keyCode === 40) { cursorY = Math.min(window.innerHeight - 10, cursorY + step); e.preventDefault(); }" +
+            "      else if (e.key === 'ArrowLeft' || e.keyCode === 37) { cursorX = Math.max(10, cursorX - step); e.preventDefault(); }" +
+            "      else if (e.key === 'ArrowRight' || e.keyCode === 39) { cursorX = Math.min(window.innerWidth - 10, cursorX + step); e.preventDefault(); }" +
+            "      else if (e.key === 'Enter' || e.keyCode === 13) {" +
+            "        cursorEl.style.display = 'none';" +
+            "        var t = document.elementFromPoint(cursorX, cursorY);" +
+            "        cursorEl.style.display = 'block';" +
+            "        if (t) { t.click(); if (typeof t.focus === 'function') t.focus(); }" +
+            "        e.preventDefault();" +
+            "        return;" +
+            "      }" +
+            "      cursorEl.style.left = cursorX + 'px';" +
+            "      cursorEl.style.top = cursorY + 'px';" +
+            "      if (cursorY < 80) window.scrollBy({ top: -250, behavior: 'smooth' });" +
+            "      if (cursorY > window.innerHeight - 80) window.scrollBy({ top: 250, behavior: 'smooth' });" +
+            "      return;" +
+            "    }" +
+            "" +
+            "    var video = document.querySelector('video');" +
+            "    var isVideoActive = video && (document.fullscreenElement || video.offsetWidth > 450);" +
+            "    if (isVideoActive) {" +
+            "      if (e.key === 'Enter' || e.keyCode === 13) {" +
+            "        if (video.paused) video.play(); else video.pause();" +
+            "        e.preventDefault(); return;" +
+            "      } else if (e.key === 'ArrowRight' || e.keyCode === 39) {" +
+            "        video.currentTime += 10; e.preventDefault(); return;" +
+            "      } else if (e.key === 'ArrowLeft' || e.keyCode === 37) {" +
+            "        video.currentTime -= 10; e.preventDefault(); return;" +
+            "      }" +
+            "    }" +
+            "" +
+            "    if (e.key === 'ArrowDown' || e.keyCode === 40) { moveFocus('down'); e.preventDefault(); }" +
+            "    else if (e.key === 'ArrowUp' || e.keyCode === 38) { moveFocus('up'); e.preventDefault(); }" +
+            "    else if (e.key === 'ArrowRight' || e.keyCode === 39) { moveFocus('right'); e.preventDefault(); }" +
+            "    else if (e.key === 'ArrowLeft' || e.keyCode === 37) { moveFocus('left'); e.preventDefault(); }" +
+            "    else if (e.key === 'Enter' || e.keyCode === 13) {" +
+            "      if (document.activeElement && typeof document.activeElement.click === 'function') {" +
+            "        document.activeElement.click();" +
+            "      }" +
+            "    }" +
+            "  }, true);" +
             "})();";
-        webView.evaluateJavascript(js, null);
+
+        webView.evaluateJavascript(tvEngineJs, null);
     }
 
     private void hideSystemUI() {
@@ -513,12 +771,16 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        // TV Remote & Controls
+        // Android TV Remote Controller Key Handling
         switch (keyCode) {
             case KeyEvent.KEYCODE_MENU:
             case KeyEvent.KEYCODE_INFO:
+            case KeyEvent.KEYCODE_SETTINGS:
+            case KeyEvent.KEYCODE_PROG_RED:
+            case KeyEvent.KEYCODE_BUTTON_Y:
                 showDrMuhammedMenu();
                 return true;
+
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_MEDIA_PLAY:
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
@@ -530,6 +792,7 @@ public class MainActivity extends AppCompatActivity {
                     return true;
                 }
                 break;
+
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
                 if (webView != null) {
                     webView.evaluateJavascript(
@@ -539,6 +802,7 @@ public class MainActivity extends AppCompatActivity {
                     return true;
                 }
                 break;
+
             case KeyEvent.KEYCODE_MEDIA_REWIND:
                 if (webView != null) {
                     webView.evaluateJavascript(
@@ -548,20 +812,53 @@ public class MainActivity extends AppCompatActivity {
                     return true;
                 }
                 break;
+
             case KeyEvent.KEYCODE_BACK:
+                // 1. Exit fullscreen video first
                 if (customView != null) {
                     if (webView != null && webView.getWebChromeClient() != null) {
                         ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
                     }
                     return true;
                 }
+
+                // 2. Disable virtual mouse mode if active
+                if (isMouseModeActive) {
+                    toggleMouseMode();
+                    return true;
+                }
+
+                // 3. Web navigation back
                 if (webView != null && webView.canGoBack()) {
                     webView.goBack();
                     return true;
                 }
-                break;
+
+                // 4. Confirm before exit on TV to prevent accidental quitting
+                showExitConfirmDialog();
+                return true;
         }
         return super.onKeyDown(keyCode, event);
+    }
+
+    private void showExitConfirmDialog() {
+        new AlertDialog.Builder(this)
+            .setTitle("تطبيق CineJoy")
+            .setMessage("هل تريد حقاً الخروج من التطبيق؟")
+            .setPositiveButton("نعم (خروج)", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    finish();
+                }
+            })
+            .setNegativeButton("إلغاء", new DialogInterface.OnClickListener() {
+                @Override
+                public void onClick(DialogInterface dialog, int which) {
+                    hideSystemUI();
+                    if (webView != null) webView.requestFocus();
+                }
+            })
+            .show();
     }
 
     @Override

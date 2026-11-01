@@ -17,8 +17,11 @@ import android.net.http.SslError;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.util.DisplayMetrics;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -65,6 +68,18 @@ public class MainActivity extends AppCompatActivity {
     private boolean isMouseModeActive = false;
     private float currentPlaybackSpeed = 1.0f;
 
+    // Native Virtual Mouse Engine variables
+    private FrameLayout nativeCursorView;
+    private float cursorX = 600f;
+    private float cursorY = 400f;
+    private int screenWidth = 1920;
+    private int screenHeight = 1080;
+
+    // D-Pad long press tracking for DPAD_CENTER / ENTER
+    private boolean isDpadCenterLongPressing = false;
+    private final Handler dpadHandler = new Handler(Looper.getMainLooper());
+    private Runnable dpadLongPressRunnable;
+
     // Ad & tracker domains blocked at network layer to save TV RAM & CPU
     private static final String[] BLOCKED_PATTERNS = new String[]{
         "llvpn.com", "a.wing.st", "doubleclick.net", "google-analytics.com",
@@ -84,6 +99,14 @@ public class MainActivity extends AppCompatActivity {
 
         // Immersive sticky fullscreen mode
         hideSystemUI();
+
+        // Get actual screen resolution
+        DisplayMetrics dm = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+        screenWidth = Math.max(800, dm.widthPixels);
+        screenHeight = Math.max(600, dm.heightPixels);
+        cursorX = screenWidth / 2f;
+        cursorY = screenHeight / 2f;
 
         // Main Root layout
         RelativeLayout rootLayout = new RelativeLayout(this);
@@ -118,8 +141,11 @@ public class MainActivity extends AppCompatActivity {
         customViewContainer.setBackgroundColor(Color.BLACK);
         customViewContainer.setVisibility(View.GONE);
 
-        // Dr. Muhammed Quick Badge (auto-fades on TV after launch)
+        // Floating Control Pill (Dr. Muhammed Hub & Mode indicator)
         drBadge = createDrMuhammedBadge();
+
+        // Native Virtual Mouse Pointer Overlay (operates on top of WebView & iframes)
+        nativeCursorView = createNativeCursorView();
 
         // Splash Screen Overlay by Dr. Muhammed
         splashLayout = createSplashScreen();
@@ -128,6 +154,7 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(progressBar);
         rootLayout.addView(customViewContainer);
         rootLayout.addView(drBadge);
+        rootLayout.addView(nativeCursorView);
         rootLayout.addView(splashLayout);
         setContentView(rootLayout);
 
@@ -158,7 +185,7 @@ public class MainActivity extends AppCompatActivity {
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
-        // WebViewClient with Network-level AdBlocker & Spatial Navigator Injection
+        // WebViewClient with Network-level AdBlocker & TV Enhancement Injection
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -203,7 +230,7 @@ public class MainActivity extends AppCompatActivity {
                 CookieManager.getInstance().flush();
                 webView.requestFocus();
 
-                // Inject TV Remote Navigation Engine & Performance Boost
+                // Inject TV Remote Navigation Engine & Deep Button Scanner
                 injectTvNavigationAndEnhancements();
 
                 // Dismiss splash screen smoothly
@@ -224,7 +251,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // WebChromeClient
+        // WebChromeClient for Fullscreen Video & File Uploads
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
@@ -314,21 +341,6 @@ public class MainActivity extends AppCompatActivity {
                 hideSplashScreen();
             }
         }, 3000);
-
-        // Auto-fade Dr. Muhammed badge after 6 seconds so it doesn't obstruct movies on TV
-        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (drBadge != null && drBadge.getVisibility() == View.VISIBLE) {
-                    drBadge.animate().alpha(0f).setDuration(600).withEndAction(new Runnable() {
-                        @Override
-                        public void run() {
-                            drBadge.setVisibility(View.GONE);
-                        }
-                    });
-                }
-            }
-        }, 6000);
     }
 
     private boolean isAdOrTracker(String url) {
@@ -341,7 +353,329 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // FEATURES BY DR. MUHAMMED
+    // NATIVE VIRTUAL MOUSE & TOUCH DISPATCH ENGINE
+    // ==========================================
+
+    private FrameLayout createNativeCursorView() {
+        FrameLayout container = new FrameLayout(this);
+        int sizeDp = 28;
+        int sizePx = (int) (sizeDp * getResources().getDisplayMetrics().density);
+        RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(sizePx, sizePx);
+        container.setLayoutParams(params);
+        container.setElevation(80f);
+
+        // Outer Neon Ring
+        View outerRing = new View(this);
+        GradientDrawable ring = new GradientDrawable();
+        ring.setShape(GradientDrawable.OVAL);
+        ring.setColor(Color.parseColor("#4495FF50"));
+        ring.setStroke(3, Color.parseColor("#95FF50"));
+        outerRing.setBackground(ring);
+        FrameLayout.LayoutParams ringParams = new FrameLayout.LayoutParams(sizePx, sizePx);
+        outerRing.setLayoutParams(ringParams);
+
+        // Center Target Dot
+        View centerDot = new View(this);
+        GradientDrawable dot = new GradientDrawable();
+        dot.setShape(GradientDrawable.OVAL);
+        dot.setColor(Color.WHITE);
+        int dotSizePx = (int) (6 * getResources().getDisplayMetrics().density);
+        FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(dotSizePx, dotSizePx);
+        dotParams.gravity = Gravity.CENTER;
+        centerDot.setBackground(dot);
+
+        container.addView(outerRing);
+        container.addView(centerDot);
+        container.setVisibility(View.GONE);
+        return container;
+    }
+
+    private void updateCursorPosition() {
+        if (nativeCursorView == null) return;
+        int size = nativeCursorView.getWidth();
+        if (size == 0) size = (int) (28 * getResources().getDisplayMetrics().density);
+        nativeCursorView.setX(cursorX - size / 2f);
+        nativeCursorView.setY(cursorY - size / 2f);
+
+        // Auto-scroll WebView when moving cursor near top or bottom edges
+        if (webView != null) {
+            if (cursorY < 120) {
+                webView.scrollBy(0, -60);
+            } else if (cursorY > screenHeight - 120) {
+                webView.scrollBy(0, 60);
+            }
+        }
+    }
+
+    /**
+     * Dispatches native Android MotionEvents (ACTION_DOWN + ACTION_UP) directly to the WebView surface.
+     * This bypasses all cross-origin iframe security restrictions and triggers true touch/click events
+     * inside ANY video player, server list, episode tab, or modal dialog.
+     */
+    private void dispatchNativeClick(float x, float y) {
+        if (webView == null) return;
+        long downTime = SystemClock.uptimeMillis();
+        long eventTime = SystemClock.uptimeMillis();
+
+        MotionEvent downEvent = MotionEvent.obtain(
+            downTime,
+            eventTime,
+            MotionEvent.ACTION_DOWN,
+            x,
+            y,
+            0
+        );
+        MotionEvent upEvent = MotionEvent.obtain(
+            downTime,
+            eventTime + 50,
+            MotionEvent.ACTION_UP,
+            x,
+            y,
+            0
+        );
+
+        webView.dispatchTouchEvent(downEvent);
+        webView.dispatchTouchEvent(upEvent);
+        downEvent.recycle();
+        upEvent.recycle();
+
+        // Visual click feedback: quick pulse animation on cursor
+        if (nativeCursorView != null) {
+            nativeCursorView.animate()
+                .scaleX(0.6f)
+                .scaleY(0.6f)
+                .setDuration(70)
+                .withEndAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (nativeCursorView != null) {
+                            nativeCursorView.animate().scaleX(1.0f).scaleY(1.0f).setDuration(70).start();
+                        }
+                    }
+                })
+                .start();
+        }
+    }
+
+    private void toggleNativeMouseMode() {
+        isMouseModeActive = !isMouseModeActive;
+        if (nativeCursorView != null) {
+            if (isMouseModeActive) {
+                nativeCursorView.setVisibility(View.VISIBLE);
+                nativeCursorView.setAlpha(1.0f);
+                updateCursorPosition();
+            } else {
+                nativeCursorView.setVisibility(View.GONE);
+            }
+        }
+
+        updateBadgePill();
+
+        Toast.makeText(
+            this,
+            isMouseModeActive
+                ? "🎯 نمط الماوس مفعّل (حرّك بالأسهم واضغط OK للضغط) — اضغط مطولاً على OK للإلغاء"
+                : "📱 نمط التنقل بالأسهم مفعّل — اضغط مطولاً على OK لتفعيل الماوس",
+            Toast.LENGTH_LONG
+        ).show();
+    }
+
+    private void updateBadgePill() {
+        if (drBadge == null) return;
+        drBadge.animate().cancel();
+        if (isMouseModeActive) {
+            drBadge.setText("🎯 نمط الماوس (OK مطولاً للتبديل)");
+            drBadge.setTextColor(Color.parseColor("#050505"));
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.parseColor("#95FF50"));
+            bg.setCornerRadius(30);
+            drBadge.setBackground(bg);
+            drBadge.setAlpha(1.0f);
+            drBadge.setVisibility(View.VISIBLE);
+        } else {
+            drBadge.setText("📱 نمط الريموت | ☰ القائمة");
+            drBadge.setTextColor(Color.parseColor("#95FF50"));
+            GradientDrawable bg = new GradientDrawable();
+            bg.setColor(Color.parseColor("#CC111111"));
+            bg.setCornerRadius(30);
+            bg.setStroke(2, Color.parseColor("#95FF50"));
+            drBadge.setBackground(bg);
+            drBadge.setVisibility(View.VISIBLE);
+            // Settle to a discreet 45% opacity so it does not distract during movie playback
+            drBadge.animate().alpha(0.45f).setDuration(500).setStartDelay(3500).start();
+        }
+    }
+
+    // ==========================================
+    // KEY EVENT HANDLING FOR ANDROID TV REMOTES
+    // ==========================================
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        // 1. Long-press detection on DPAD_CENTER / ENTER to toggle Virtual Mouse
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            if (event.getRepeatCount() == 0) {
+                isDpadCenterLongPressing = false;
+                dpadLongPressRunnable = new Runnable() {
+                    @Override
+                    public void run() {
+                        isDpadCenterLongPressing = true;
+                        toggleNativeMouseMode();
+                    }
+                };
+                dpadHandler.postDelayed(dpadLongPressRunnable, 650); // 650ms long press threshold
+            }
+            return true;
+        }
+
+        // 2. If Virtual Mouse Mode is active, handle directional arrows with acceleration
+        if (isMouseModeActive) {
+            int repeat = event.getRepeatCount();
+            float step = Math.min(65f, 22f + repeat * 6f);
+
+            switch (keyCode) {
+                case KeyEvent.KEYCODE_DPAD_UP:
+                    cursorY = Math.max(10f, cursorY - step);
+                    updateCursorPosition();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_DOWN:
+                    cursorY = Math.min((float) screenHeight - 10f, cursorY + step);
+                    updateCursorPosition();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_LEFT:
+                    cursorX = Math.max(10f, cursorX - step);
+                    updateCursorPosition();
+                    return true;
+                case KeyEvent.KEYCODE_DPAD_RIGHT:
+                    cursorX = Math.min((float) screenWidth - 10f, cursorX + step);
+                    updateCursorPosition();
+                    return true;
+            }
+        }
+
+        // 3. Android TV Remote Media & Menu Controller Handling
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_MENU:
+            case KeyEvent.KEYCODE_INFO:
+            case KeyEvent.KEYCODE_SETTINGS:
+            case KeyEvent.KEYCODE_PROG_RED:
+            case KeyEvent.KEYCODE_BUTTON_Y:
+                showDrMuhammedMenu();
+                return true;
+
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "(function() { var v = document.querySelector('video'); if (v) { if (v.paused) v.play(); else v.pause(); } })()",
+                        null
+                    );
+                    return true;
+                }
+                break;
+
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime += 10; })()",
+                        null
+                    );
+                    return true;
+                }
+                break;
+
+            case KeyEvent.KEYCODE_MEDIA_REWIND:
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime -= 10; })()",
+                        null
+                    );
+                    return true;
+                }
+                break;
+
+            case KeyEvent.KEYCODE_BACK:
+                // Exit fullscreen video first
+                if (customView != null) {
+                    if (webView != null && webView.getWebChromeClient() != null) {
+                        ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
+                    }
+                    return true;
+                }
+
+                // If Mouse Mode is active, turning back reverts to D-Pad mode first
+                if (isMouseModeActive) {
+                    toggleNativeMouseMode();
+                    return true;
+                }
+
+                // Web navigation back
+                if (webView != null && webView.canGoBack()) {
+                    webView.goBack();
+                    return true;
+                }
+
+                // Confirm before exit on TV to prevent accidental quitting
+                showExitConfirmDialog();
+                return true;
+        }
+
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public boolean onKeyUp(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            // Cancel the long-press timer
+            if (dpadLongPressRunnable != null) {
+                dpadHandler.removeCallbacks(dpadLongPressRunnable);
+                dpadLongPressRunnable = null;
+            }
+
+            // If a long press just triggered, consume and do not click
+            if (isDpadCenterLongPressing) {
+                isDpadCenterLongPressing = false;
+                return true;
+            }
+
+            // Short press:
+            if (isMouseModeActive) {
+                // Dispatch native hardware touch event at cursor location
+                dispatchNativeClick(cursorX, cursorY);
+                return true;
+            } else {
+                // In D-Pad mode: trigger Click on currently focused element or play/pause video
+                if (webView != null) {
+                    webView.evaluateJavascript(
+                        "(function() {" +
+                        "  var v = document.querySelector('video');" +
+                        "  if (v && (document.fullscreenElement || v.offsetWidth > 450)) {" +
+                        "    if (v.paused) v.play(); else v.pause(); return;" +
+                        "  }" +
+                        "  var el = document.activeElement;" +
+                        "  if (el && typeof el.click === 'function') {" +
+                        "    var r = el.getBoundingClientRect();" +
+                        "    var cx = r.left + r.width / 2;" +
+                        "    var cy = r.top + r.height / 2;" +
+                        "    var md = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
+                        "    var mu = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
+                        "    var mc = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
+                        "    el.dispatchEvent(md); el.dispatchEvent(mu); el.dispatchEvent(mc);" +
+                        "    el.click();" +
+                        "  }" +
+                        "})();",
+                        null
+                    );
+                }
+                return true;
+            }
+        }
+        return super.onKeyUp(keyCode, event);
+    }
+
+    // ==========================================
+    // UI COMPONENTS & DR. MUHAMMED HUB
     // ==========================================
 
     private RelativeLayout createSplashScreen() {
@@ -407,12 +741,12 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView createDrMuhammedBadge() {
         TextView badge = new TextView(this);
-        badge.setText("👨‍💻 Dr. Muhammed (Menu)");
+        badge.setText("📱 نمط الريموت | ☰ القائمة");
         badge.setTextSize(11);
         badge.setTextColor(Color.parseColor("#95FF50"));
         badge.setTypeface(Typeface.DEFAULT_BOLD);
-        badge.setPadding(24, 10, 24, 10);
-        badge.setFocusable(false); // Keep focus on web items for remote navigation
+        badge.setPadding(26, 12, 26, 12);
+        badge.setFocusable(false);
 
         GradientDrawable bg = new GradientDrawable();
         bg.setColor(Color.parseColor("#CC111111"));
@@ -435,6 +769,9 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // Discreet initial fade after 4 seconds
+        badge.animate().alpha(0.45f).setDuration(500).setStartDelay(4000).start();
+
         return badge;
     }
 
@@ -443,7 +780,7 @@ public class MainActivity extends AppCompatActivity {
         builder.setTitle("🎬 CineJoy TV Hub — By Dr. Muhammed");
 
         String[] options = {
-            "🎯 نمط مؤشر الماوس (Virtual Mouse): " + (isMouseModeActive ? "مفعّل 🟢" : "معطّل ⚪"),
+            "🎯 مؤشر الماوس الافتراضي (Virtual Mouse): " + (isMouseModeActive ? "مفعّل 🟢 (اضغط مطولاً على OK)" : "معطّل ⚪ (اضغط مطولاً على OK)"),
             "🛡️ حظر الإعلانات والبوب أب: " + (isAdBlockActive ? "مفعّل ✅" : "معطّل ❌"),
             "⚡ تسريع أداء الشاشة (TV Hardware Booster): " + (isTvBoostActive ? "مفعّل ✅" : "معطّل ❌"),
             "⚡ سرعة التشغيل: " + currentPlaybackSpeed + "x",
@@ -459,7 +796,7 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(DialogInterface dialog, int which) {
                 switch (which) {
                     case 0:
-                        toggleMouseMode();
+                        toggleNativeMouseMode();
                         break;
                     case 1:
                         isAdBlockActive = !isAdBlockActive;
@@ -514,16 +851,6 @@ public class MainActivity extends AppCompatActivity {
         dialog.show();
     }
 
-    private void toggleMouseMode() {
-        isMouseModeActive = !isMouseModeActive;
-        if (webView != null) {
-            webView.evaluateJavascript("window.toggleVirtualMouse && window.toggleVirtualMouse(" + isMouseModeActive + ");", null);
-        }
-        Toast.makeText(this,
-            isMouseModeActive ? "🎯 تم تفعيل مؤشر الماوس الافتراضي (حرك بالأسهم واضغط OK)" : "📱 تم العودة إلى نمط التنقل العادي بالريموت",
-            Toast.LENGTH_SHORT).show();
-    }
-
     private void cyclePlaybackSpeed() {
         if (currentPlaybackSpeed == 1.0f) currentPlaybackSpeed = 1.25f;
         else if (currentPlaybackSpeed == 1.25f) currentPlaybackSpeed = 1.5f;
@@ -554,18 +881,18 @@ public class MainActivity extends AppCompatActivity {
             .setTitle("حول تطبيق CineJoy TV")
             .setMessage("✨ CineJoy Pro Edition — Smart TV & Android\n" +
                         "👨‍💻 تم التطوير والتخصيص بواسطة: Dr. Muhammed\n\n" +
-                        "الميزات المدمجة:\n" +
-                        "• محرك تنقل متقدم بالريموت كنترول (D-Pad Spatial Navigation)\n" +
-                        "• مؤشر ماوس افتراضي (Virtual Mouse) للتحكم بالمشغلات الدقيقة\n" +
+                        "الميزات المدمجة والتحسينات الجديدة:\n" +
+                        "• مؤشر ماوس افتراضي أصلي (Native MotionEvent Pointer) يعمل على كافة الأزرار داخل المشغلات والإطارات (iframes)\n" +
+                        "• تفعيل/تعطيل نمط الماوس بضغطة مطولة على زر OK (0.7 ثانية)\n" +
+                        "• محرك تنقل متقدم بالريموت كنترول (D-Pad Spatial Navigation) مع فحص شامل لأزرار الحلقات والسيرفرات\n" +
                         "• تمييز بصري نيون ساطع للعنصر المحدد على الشاشة الكبيرة\n" +
                         "• حظر فوري للإعلانات والصفحات المنبثقة على مستوى الشبكة\n" +
-                        "• تسريع أداء الشاشات الضعيفة بإلغاء المؤثرات الثقيلة\n" +
-                        "• التحكم الكامل بالفيديو (تشغيل، إيقاف، تقديم، تأخير) عبر الريموت")
+                        "• تسريع أداء الشاشات الضعيفة بإلغاء المؤثرات الثقيلة")
             .setPositiveButton("حسناً", null)
             .show();
     }
 
-    // Injects Spatial Navigation Engine, High-Contrast TV Focus, Performance Boost & Virtual Mouse
+    // Injects Deep Spatial Navigation Engine, High-Contrast TV Focus & Performance Boost
     private void injectTvNavigationAndEnhancements() {
         if (webView == null) return;
 
@@ -581,7 +908,7 @@ public class MainActivity extends AppCompatActivity {
             "      outline: 4px solid #95FF50 !important;" +
             "      outline-offset: 3px !important;" +
             "      border-radius: 8px !important;" +
-            "      box-shadow: 0 0 22px rgba(149, 255, 80, 0.9) !important;" +
+            "      box-shadow: 0 0 24px rgba(149, 255, 80, 0.95) !important;" +
             "      transform: scale(1.05) !important;" +
             "      transition: transform 0.12s ease-out, outline 0.12s ease-out !important;" +
             "      z-index: 999999 !important;" +
@@ -591,20 +918,6 @@ public class MainActivity extends AppCompatActivity {
             "      -webkit-backdrop-filter: none !important;" +
             "      text-shadow: none !important;" +
             "    }" +
-            "    #cinejoy-virtual-cursor {" +
-            "      position: fixed;" +
-            "      width: 26px;" +
-            "      height: 26px;" +
-            "      border-radius: 50%;" +
-            "      background: rgba(149, 255, 80, 0.9);" +
-            "      border: 3px solid #ffffff;" +
-            "      box-shadow: 0 0 16px #95FF50, 0 0 5px #000000;" +
-            "      pointer-events: none;" +
-            "      z-index: 2147483647;" +
-            "      transform: translate(-50%, -50%);" +
-            "      display: none;" +
-            "      transition: left 0.05s linear, top 0.05s linear;" +
-            "    }" +
             "  `;" +
             "  (document.head || document.documentElement).appendChild(style);" +
             "" +
@@ -612,9 +925,17 @@ public class MainActivity extends AppCompatActivity {
             "  window.open = function() { return null; };" +
             "  try { localStorage.setItem('addies', 'false'); } catch(e){}" +
             "" +
-            "  /* 3. Automatic Tabindex Scanner for Movie Cards */" +
+            "  /* 3. Deep Scanner for All Interactive Web Elements */" +
             "  function makeFocusable() {" +
-            "    var selectors = ['a[href]', 'button', 'input', 'select', '[role=\"button\"]', '[onclick]', 'div[class*=\"card\"]', 'div[class*=\"item\"]', 'div[class*=\"poster\"]', 'div[class*=\"movie\"]', 'div[class*=\"episode\"]'];" +
+            "    var selectors = [" +
+            "      'a[href]', 'button', 'input', 'select', 'textarea', '[tabindex]'," +
+            "      '[role=\"button\"]', '[role=\"link\"]', '[role=\"tab\"]', '[onclick]'," +
+            "      '[data-url]', '[data-server]', '[data-episode]', '[data-season]'," +
+            "      'div[class*=\"card\"]', 'div[class*=\"item\"]', 'div[class*=\"poster\"]'," +
+            "      'div[class*=\"movie\"]', 'div[class*=\"episode\"]', 'div[class*=\"season\"]'," +
+            "      'div[class*=\"server\"]', 'div[class*=\"play\"]', 'div[class*=\"btn\"]'," +
+            "      'span[class*=\"btn\"]', 'span[class*=\"server\"]', 'li[class*=\"item\"]'" +
+            "    ];" +
             "    var elements = document.querySelectorAll(selectors.join(', '));" +
             "    for (var i = 0; i < elements.length; i++) {" +
             "      var el = elements[i];" +
@@ -626,29 +947,7 @@ public class MainActivity extends AppCompatActivity {
             "  makeFocusable();" +
             "  setInterval(makeFocusable, 1800);" +
             "" +
-            "  /* 4. Virtual Mouse State */" +
-            "  window.__cinejoyMouseMode = false;" +
-            "  var cursorX = window.innerWidth / 2;" +
-            "  var cursorY = window.innerHeight / 2;" +
-            "  var cursorEl = document.createElement('div');" +
-            "  cursorEl.id = 'cinejoy-virtual-cursor';" +
-            "  document.body.appendChild(cursorEl);" +
-            "" +
-            "  window.toggleVirtualMouse = function(enable) {" +
-            "    if (typeof enable === 'boolean') {" +
-            "      window.__cinejoyMouseMode = enable;" +
-            "    } else {" +
-            "      window.__cinejoyMouseMode = !window.__cinejoyMouseMode;" +
-            "    }" +
-            "    cursorEl.style.display = window.__cinejoyMouseMode ? 'block' : 'none';" +
-            "    if (window.__cinejoyMouseMode) {" +
-            "      cursorEl.style.left = cursorX + 'px';" +
-            "      cursorEl.style.top = cursorY + 'px';" +
-            "    }" +
-            "    return window.__cinejoyMouseMode;" +
-            "  };" +
-            "" +
-            "  /* 5. Spatial Navigation Engine */" +
+            "  /* 4. Spatial Navigation Movement */" +
             "  function getFocusable() {" +
             "    var all = document.querySelectorAll('[tabindex=\"0\"], a, button, input');" +
             "    var vis = [];" +
@@ -699,34 +998,10 @@ public class MainActivity extends AppCompatActivity {
             "  }" +
             "" +
             "  window.addEventListener('keydown', function(e) {" +
-            "    if (window.__cinejoyMouseMode) {" +
-            "      var step = 45;" +
-            "      if (e.key === 'ArrowUp' || e.keyCode === 38) { cursorY = Math.max(10, cursorY - step); e.preventDefault(); }" +
-            "      else if (e.key === 'ArrowDown' || e.keyCode === 40) { cursorY = Math.min(window.innerHeight - 10, cursorY + step); e.preventDefault(); }" +
-            "      else if (e.key === 'ArrowLeft' || e.keyCode === 37) { cursorX = Math.max(10, cursorX - step); e.preventDefault(); }" +
-            "      else if (e.key === 'ArrowRight' || e.keyCode === 39) { cursorX = Math.min(window.innerWidth - 10, cursorX + step); e.preventDefault(); }" +
-            "      else if (e.key === 'Enter' || e.keyCode === 13) {" +
-            "        cursorEl.style.display = 'none';" +
-            "        var t = document.elementFromPoint(cursorX, cursorY);" +
-            "        cursorEl.style.display = 'block';" +
-            "        if (t) { t.click(); if (typeof t.focus === 'function') t.focus(); }" +
-            "        e.preventDefault();" +
-            "        return;" +
-            "      }" +
-            "      cursorEl.style.left = cursorX + 'px';" +
-            "      cursorEl.style.top = cursorY + 'px';" +
-            "      if (cursorY < 80) window.scrollBy({ top: -250, behavior: 'smooth' });" +
-            "      if (cursorY > window.innerHeight - 80) window.scrollBy({ top: 250, behavior: 'smooth' });" +
-            "      return;" +
-            "    }" +
-            "" +
             "    var video = document.querySelector('video');" +
             "    var isVideoActive = video && (document.fullscreenElement || video.offsetWidth > 450);" +
             "    if (isVideoActive) {" +
-            "      if (e.key === 'Enter' || e.keyCode === 13) {" +
-            "        if (video.paused) video.play(); else video.pause();" +
-            "        e.preventDefault(); return;" +
-            "      } else if (e.key === 'ArrowRight' || e.keyCode === 39) {" +
+            "      if (e.key === 'ArrowRight' || e.keyCode === 39) {" +
             "        video.currentTime += 10; e.preventDefault(); return;" +
             "      } else if (e.key === 'ArrowLeft' || e.keyCode === 37) {" +
             "        video.currentTime -= 10; e.preventDefault(); return;" +
@@ -737,11 +1012,6 @@ public class MainActivity extends AppCompatActivity {
             "    else if (e.key === 'ArrowUp' || e.keyCode === 38) { moveFocus('up'); e.preventDefault(); }" +
             "    else if (e.key === 'ArrowRight' || e.keyCode === 39) { moveFocus('right'); e.preventDefault(); }" +
             "    else if (e.key === 'ArrowLeft' || e.keyCode === 37) { moveFocus('left'); e.preventDefault(); }" +
-            "    else if (e.key === 'Enter' || e.keyCode === 13) {" +
-            "      if (document.activeElement && typeof document.activeElement.click === 'function') {" +
-            "        document.activeElement.click();" +
-            "      }" +
-            "    }" +
             "  }, true);" +
             "})();";
 
@@ -758,87 +1028,6 @@ public class MainActivity extends AppCompatActivity {
             View.SYSTEM_UI_FLAG_FULLSCREEN |
             View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         );
-    }
-
-    @Override
-    public void onWindowFocusChanged(boolean hasFocus) {
-        super.onWindowFocusChanged(hasFocus);
-        if (hasFocus) {
-            hideSystemUI();
-            if (webView != null) webView.requestFocus();
-        }
-    }
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        // Android TV Remote Controller Key Handling
-        switch (keyCode) {
-            case KeyEvent.KEYCODE_MENU:
-            case KeyEvent.KEYCODE_INFO:
-            case KeyEvent.KEYCODE_SETTINGS:
-            case KeyEvent.KEYCODE_PROG_RED:
-            case KeyEvent.KEYCODE_BUTTON_Y:
-                showDrMuhammedMenu();
-                return true;
-
-            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-            case KeyEvent.KEYCODE_MEDIA_PLAY:
-            case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                if (webView != null) {
-                    webView.evaluateJavascript(
-                        "(function() { var v = document.querySelector('video'); if (v) { if (v.paused) v.play(); else v.pause(); } })()",
-                        null
-                    );
-                    return true;
-                }
-                break;
-
-            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-                if (webView != null) {
-                    webView.evaluateJavascript(
-                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime += 10; })()",
-                        null
-                    );
-                    return true;
-                }
-                break;
-
-            case KeyEvent.KEYCODE_MEDIA_REWIND:
-                if (webView != null) {
-                    webView.evaluateJavascript(
-                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime -= 10; })()",
-                        null
-                    );
-                    return true;
-                }
-                break;
-
-            case KeyEvent.KEYCODE_BACK:
-                // 1. Exit fullscreen video first
-                if (customView != null) {
-                    if (webView != null && webView.getWebChromeClient() != null) {
-                        ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
-                    }
-                    return true;
-                }
-
-                // 2. Disable virtual mouse mode if active
-                if (isMouseModeActive) {
-                    toggleMouseMode();
-                    return true;
-                }
-
-                // 3. Web navigation back
-                if (webView != null && webView.canGoBack()) {
-                    webView.goBack();
-                    return true;
-                }
-
-                // 4. Confirm before exit on TV to prevent accidental quitting
-                showExitConfirmDialog();
-                return true;
-        }
-        return super.onKeyDown(keyCode, event);
     }
 
     private void showExitConfirmDialog() {
@@ -859,6 +1048,15 @@ public class MainActivity extends AppCompatActivity {
                 }
             })
             .show();
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        if (hasFocus) {
+            hideSystemUI();
+            if (webView != null) webView.requestFocus();
+        }
     }
 
     @Override
@@ -897,6 +1095,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        if (dpadLongPressRunnable != null) {
+            dpadHandler.removeCallbacks(dpadLongPressRunnable);
+        }
         if (webView != null) {
             webView.destroy();
         }

@@ -36,25 +36,30 @@ jobs:
 
       - name: Prepare APK for Release
         run: |
-          cp app/build/outputs/apk/debug/app-debug.apk CineJoy-v1.0.apk
+          cp app/build/outputs/apk/debug/app-debug.apk CineJoy-v1.1.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: CineJoy-App
-          path: CineJoy-v1.0.apk
+          path: CineJoy-v1.1.apk
           if-no-files-found: error
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.0-${{ github.run_number }}
-          name: CineJoy App v1.0 (Build #${{ github.run_number }})
+          tag_name: v1.1-${{ github.run_number }}
+          name: CineJoy App v1.1 - Smart TV Remote & Virtual Mouse Fix (Build #${{ github.run_number }})
           body: |
-            ## CineJoy Android App
-            اضغط على رابط التحميل المباشر أدناه لتثبيت التطبيق على جوالك:
-            - **CineJoy-v1.0.apk**
-          files: CineJoy-v1.0.apk
+            ## CineJoy Android App v1.1 (تحديث التحكم والتلفاز)
+            تم إصلاح مشكلة التحكم عبر ريموت التلفاز بشكل جذري:
+            - **مؤشر ماوس افتراضي أصلي (Native MotionEvent):** ينفذ داخل مشغلات الفيديو والإطارات الخارجية (`<iframe>`) لضغط أي زر وسيرفر وحلقة بدقة 100%.
+            - **التبديل الفوري:** ضغطة مطولة على زر `OK` في أي ريموت (0.7 ثانية) لتفعيل/إلغاء الماوس.
+            - **فاحص شامل لأزرار المشاهدة والسيرفرات:** إبراز العنصر المحدد بإطار نيون ساطع.
+
+            اضغط على رابط التحميل المباشر أدناه لتثبيت التحديث على التلفاز أو الهاتف:
+            - **CineJoy-v1.1.apk**
+          files: CineJoy-v1.1.apk
           draft: false
           prerelease: false

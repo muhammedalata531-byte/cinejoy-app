@@ -1,4 +1,4 @@
-﻿package com.cinejoy.app;
+package com.cinejoy.app;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;

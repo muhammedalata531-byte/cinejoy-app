@@ -69,8 +69,8 @@ public class MainActivity extends AppCompatActivity {
 
     // Native Virtual Mouse Engine variables
     private FrameLayout nativeCursorView;
-    private float cursorX = 600f;
-    private float cursorY = 400f;
+    private float cursorX = 960f;
+    private float cursorY = 540f;
     private int screenWidth = 1920;
     private int screenHeight = 1080;
 
@@ -111,14 +111,13 @@ public class MainActivity extends AppCompatActivity {
         RelativeLayout rootLayout = new RelativeLayout(this);
         rootLayout.setBackgroundColor(Color.parseColor("#050505"));
 
-        // Optimized WebView for Android TV with Hardware Acceleration
+        // Optimized WebView for Android TV (Standard hardware acceleration via Window)
         webView = new WebView(this);
         RelativeLayout.LayoutParams wvParams = new RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.MATCH_PARENT,
             RelativeLayout.LayoutParams.MATCH_PARENT);
         webView.setLayoutParams(wvParams);
         webView.setBackgroundColor(Color.parseColor("#050505"));
-        // Hardware acceleration handled automatically by window
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
@@ -173,7 +172,6 @@ public class MainActivity extends AppCompatActivity {
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setTextZoom(100);
-        settings.setRenderPriority(WebSettings.RenderPriority.HIGH);
 
         // Remove '; wv' from User-Agent for standard browser compatibility
         String defaultUa = settings.getUserAgentString();
@@ -215,10 +213,6 @@ public class MainActivity extends AppCompatActivity {
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 progressBar.setVisibility(View.VISIBLE);
                 progressBar.setProgress(15);
-                view.evaluateJavascript(
-                    "(function() { try { localStorage.setItem('addies', 'false'); } catch(e){} window.open = function() { return null; }; })();",
-                    null
-                );
             }
 
             @Override
@@ -227,8 +221,8 @@ public class MainActivity extends AppCompatActivity {
                 CookieManager.getInstance().flush();
                 webView.requestFocus();
 
-                // Inject lightweight TV styles & enhancements (NO LAG)
-                injectLightweightTvEnhancements();
+                // Inject TV subtitle & focus enhancements
+                injectTvSubtitleAndControlEnhancements();
 
                 hideSplashScreen();
                 updateBadgePill();
@@ -270,6 +264,9 @@ public class MainActivity extends AppCompatActivity {
                 customViewContainer.addView(view);
                 setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
                 hideSystemUI();
+                if (nativeCursorView != null) {
+                    nativeCursorView.bringToFront();
+                }
             }
 
             @Override
@@ -325,7 +322,7 @@ public class MainActivity extends AppCompatActivity {
             webView.loadUrl(TARGET_URL);
         }
 
-        Toast.makeText(this, "🎬 CineJoy TV Edition — By Dr. Muhammed", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "ðŸŽ¬ CineJoy TV Edition â€” By Dr. Muhammed", Toast.LENGTH_SHORT).show();
 
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
@@ -350,28 +347,27 @@ public class MainActivity extends AppCompatActivity {
 
     private FrameLayout createNativeCursorView() {
         FrameLayout container = new FrameLayout(this);
-        int sizeDp = 28;
+        int sizeDp = 30;
         int sizePx = (int) (sizeDp * getResources().getDisplayMetrics().density);
         RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(sizePx, sizePx);
         container.setLayoutParams(params);
-        // Elevation removed to prevent EGL_BAD_ALLOC
 
-        // Outer Neon Ring
+        // High-contrast outer neon circle
         View outerRing = new View(this);
         GradientDrawable ring = new GradientDrawable();
         ring.setShape(GradientDrawable.OVAL);
-        ring.setColor(Color.parseColor("#6695FF50"));
+        ring.setColor(Color.parseColor("#8895FF50"));
         ring.setStroke(3, Color.parseColor("#95FF50"));
         outerRing.setBackground(ring);
         FrameLayout.LayoutParams ringParams = new FrameLayout.LayoutParams(sizePx, sizePx);
         outerRing.setLayoutParams(ringParams);
 
-        // Center Target Dot
+        // Center crosshair pointer dot
         View centerDot = new View(this);
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
         dot.setColor(Color.WHITE);
-        int dotSizePx = (int) (6 * getResources().getDisplayMetrics().density);
+        int dotSizePx = (int) (8 * getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(dotSizePx, dotSizePx);
         dotParams.gravity = Gravity.CENTER;
         centerDot.setBackground(dot);
@@ -386,26 +382,29 @@ public class MainActivity extends AppCompatActivity {
     private void updateCursorPosition() {
         if (nativeCursorView == null) return;
         int size = nativeCursorView.getWidth();
-        if (size == 0) size = (int) (28 * getResources().getDisplayMetrics().density);
+        if (size == 0) size = (int) (30 * getResources().getDisplayMetrics().density);
         nativeCursorView.setX(cursorX - size / 2f);
         nativeCursorView.setY(cursorY - size / 2f);
 
-        // Smooth boundary scrolling without heavy layout thrashing
+        // Auto edge scrolling
         if (webView != null) {
-            if (cursorY < 100) {
+            if (cursorY < 120) {
                 webView.scrollBy(0, -60);
-            } else if (cursorY > screenHeight - 100) {
+            } else if (cursorY > screenHeight - 120) {
                 webView.scrollBy(0, 60);
             }
         }
     }
 
     /**
-     * Dispatches native Android MotionEvents (ACTION_DOWN + ACTION_UP) directly to the WebView surface.
-     * Guaranteed to work on ANY button, iframe, video player control, or server list.
+     * Dispatches native hardware touch events (ACTION_DOWN + ACTION_UP) directly to the active surface.
+     * Guaranteed to trigger touches inside any video player, iframe, or subtitle list!
      */
     private void dispatchNativeClick(float x, float y) {
-        if (webView == null) return;
+        View target = (customViewContainer != null && customViewContainer.getVisibility() == View.VISIBLE && customView != null)
+            ? customView : webView;
+
+        if (target == null) return;
         long downTime = SystemClock.uptimeMillis();
 
         MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[1];
@@ -429,23 +428,23 @@ public class MainActivity extends AppCompatActivity {
         );
 
         MotionEvent upEvent = MotionEvent.obtain(
-            downTime, downTime + 80,
+            downTime, downTime + 70,
             MotionEvent.ACTION_UP,
             1, props, coords,
             0, 0, 1f, 1f, 0, 0,
             0, 0
         );
 
-        webView.dispatchTouchEvent(downEvent);
-        webView.dispatchTouchEvent(upEvent);
+        target.dispatchTouchEvent(downEvent);
+        target.dispatchTouchEvent(upEvent);
         downEvent.recycle();
         upEvent.recycle();
 
-        // Cursor visual click pulse
+        // Cursor visual pulse animation
         if (nativeCursorView != null) {
             nativeCursorView.animate()
-                .scaleX(0.7f)
-                .scaleY(0.7f)
+                .scaleX(0.6f)
+                .scaleY(0.6f)
                 .setDuration(60)
                 .withEndAction(new Runnable() {
                     @Override
@@ -467,8 +466,7 @@ public class MainActivity extends AppCompatActivity {
                 cursorY = screenHeight / 2f;
                 nativeCursorView.setVisibility(View.VISIBLE);
                 nativeCursorView.setAlpha(1.0f);
-                nativeCursorView.setScaleX(1.0f);
-                nativeCursorView.setScaleY(1.0f);
+                nativeCursorView.bringToFront();
                 updateCursorPosition();
             } else {
                 nativeCursorView.setVisibility(View.GONE);
@@ -480,8 +478,8 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(
             this,
             isMouseModeActive
-                ? "🎯 نمط الماوس مفعّل — حرّك بالأسهم واضغط OK للنقر\nاضغط BACK أو OK مطولاً للرجوع"
-                : "📱 نمط الأسهم مفعّل — اضغط مطولاً على OK لتفعيل الماوس",
+                ? "ðŸŽ¯ Ù†Ù…Ø· Ø§Ù„Ù…Ø§ÙˆØ³ Ù…ÙØ¹Ù‘Ù„: Ø­Ø±Ù‘Ùƒ Ø¨Ø§Ù„Ø£Ø³Ù‡Ù… ÙˆØ§Ø¶ØºØ· OK Ù„Ù„Ù†Ù‚Ø± Ø¹Ù„Ù‰ Ø§Ù„ØªØ±Ø¬Ù…Ø© ÙˆØ§Ù„Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª\n(Ø§Ø¶ØºØ· BACK Ø£Ùˆ OK Ù…Ø·ÙˆÙ„Ø§Ù‹ Ù„Ù„Ø±Ø¬ÙˆØ¹)"
+                : "ðŸ“± Ù†Ù…Ø· Ø§Ù„Ø£Ø³Ù‡Ù… Ù…ÙØ¹Ù‘Ù„ (Ø§Ø¶ØºØ· Ù…Ø·ÙˆÙ„Ø§Ù‹ Ø¹Ù„Ù‰ OK Ø£Ùˆ Ø²Ø± Ø§Ù„Ù‚Ø§Ø¦Ù…Ø© Ù„ØªÙØ¹ÙŠÙ„ Ø§Ù„Ù…Ø§ÙˆØ³)",
             Toast.LENGTH_SHORT
         ).show();
     }
@@ -493,7 +491,7 @@ public class MainActivity extends AppCompatActivity {
         drBadge.setVisibility(View.VISIBLE);
 
         if (isMouseModeActive) {
-            drBadge.setText("🎯 ماوس | BACK للخروج");
+            drBadge.setText("ðŸŽ¯ Ù…Ø§ÙˆØ³ Ù…ÙØ¹Ù‘Ù„ | BACK Ù„Ù„Ø®Ø±ÙˆØ¬");
             drBadge.setTextColor(Color.parseColor("#050505"));
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.parseColor("#95FF50"));
@@ -501,14 +499,14 @@ public class MainActivity extends AppCompatActivity {
             drBadge.setBackground(bg);
             drBadge.setAlpha(1.0f);
         } else {
-            drBadge.setText("📱 ريموت | ☰ القائمة");
+            drBadge.setText("ðŸ“± Ø±ÙŠÙ…ÙˆØª | ðŸŽ¯ Ø§Ù„Ù…Ø§ÙˆØ³ (OK Ù…Ø·ÙˆÙ„Ø§Ù‹)");
             drBadge.setTextColor(Color.parseColor("#95FF50"));
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.parseColor("#CC111111"));
             bg.setCornerRadius(30);
             bg.setStroke(2, Color.parseColor("#95FF50"));
             drBadge.setBackground(bg);
-            drBadge.animate().alpha(0.65f).setDuration(500).setStartDelay(3000).start();
+            drBadge.animate().alpha(0.70f).setDuration(500).setStartDelay(3000).start();
         }
     }
 
@@ -519,7 +517,7 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
 
-        // 1. Long-press OK (600ms) to toggle Mouse Mode
+        // 1. Long-press OK (450ms) to toggle Mouse Mode
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                 || keyCode == KeyEvent.KEYCODE_ENTER
                 || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
@@ -533,15 +531,23 @@ public class MainActivity extends AppCompatActivity {
                         toggleNativeMouseMode();
                     }
                 };
-                dpadHandler.postDelayed(dpadLongPressRunnable, 600);
+                dpadHandler.postDelayed(dpadLongPressRunnable, 450);
             }
             return true;
         }
 
-        // 2. When Mouse Mode is active: Arrow keys ONLY move cursor, NEVER interfere with web focus or video
+        // 2. Direct shortcut keys to toggle Mouse Mode:
+        // Yellow button, Blue button, or Info key on TV remote toggles Mouse Mode instantly!
+        if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW || keyCode == KeyEvent.KEYCODE_PROG_BLUE
+                || keyCode == KeyEvent.KEYCODE_INFO || keyCode == KeyEvent.KEYCODE_BUTTON_Y) {
+            toggleNativeMouseMode();
+            return true;
+        }
+
+        // 3. When Mouse Mode is active: Arrow keys ONLY move cursor smoothly
         if (isMouseModeActive) {
             int repeat = event.getRepeatCount();
-            float step = Math.min(60f, 16f + repeat * 4f);
+            float step = Math.min(65f, 18f + repeat * 4f);
 
             switch (keyCode) {
                 case KeyEvent.KEYCODE_DPAD_UP:
@@ -567,8 +573,8 @@ public class MainActivity extends AppCompatActivity {
             return true;
         }
 
-        // 3. Normal TV mode: Do NOT intercept directional arrows!
-        // Pass them directly to the WebView so the video player or web page handles them natively!
+        // 4. In Normal Mode: Directional Arrows
+        // Pass them directly to WebView / Video Player
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_DPAD_DOWN:
@@ -577,13 +583,11 @@ public class MainActivity extends AppCompatActivity {
                 return super.onKeyDown(keyCode, event);
         }
 
-        // 4. Menu & Media Keys
+        // 5. Menu & Media Keys
         switch (keyCode) {
             case KeyEvent.KEYCODE_MENU:
-            case KeyEvent.KEYCODE_INFO:
             case KeyEvent.KEYCODE_SETTINGS:
             case KeyEvent.KEYCODE_PROG_RED:
-            case KeyEvent.KEYCODE_BUTTON_Y:
                 showDrMuhammedMenu();
                 return true;
 
@@ -659,7 +663,7 @@ public class MainActivity extends AppCompatActivity {
             if (isMouseModeActive) {
                 dispatchNativeClick(cursorX, cursorY);
             } else {
-                // In D-Pad mode, click activeElement cleanly without crashing TouchEvent
+                // In D-Pad mode, trigger click on activeElement or subtitles
                 if (webView != null) {
                     webView.evaluateJavascript(
                         "(function() {" +
@@ -712,7 +716,7 @@ public class MainActivity extends AppCompatActivity {
         titleText.setGravity(Gravity.CENTER);
 
         TextView authorText = new TextView(this);
-        authorText.setText("⚡ TV Edition — Developed by Dr. Muhammed");
+        authorText.setText("âš¡ TV Edition â€” Developed by Dr. Muhammed");
         authorText.setTextSize(15);
         authorText.setTextColor(Color.parseColor("#DDDDDD"));
         authorText.setGravity(Gravity.CENTER);
@@ -742,7 +746,7 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView createDrMuhammedBadge() {
         TextView badge = new TextView(this);
-        badge.setText("📱 ريموت | ☰ القائمة");
+        badge.setText("ðŸ“± Ø±ÙŠÙ…ÙˆØª | ðŸŽ¯ Ø§Ù„Ù…Ø§ÙˆØ³");
         badge.setTextSize(11);
         badge.setTextColor(Color.parseColor("#95FF50"));
         badge.setTypeface(Typeface.DEFAULT_BOLD);
@@ -763,14 +767,23 @@ public class MainActivity extends AppCompatActivity {
         badgeParams.setMargins(0, 20, 20, 0);
         badge.setLayoutParams(badgeParams);
 
+        // Clicking the badge directly toggles Mouse Mode or opens menu
         badge.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                showDrMuhammedMenu();
+                toggleNativeMouseMode();
             }
         });
 
-        badge.animate().alpha(0.65f).setDuration(500).setStartDelay(3000).start();
+        badge.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                showDrMuhammedMenu();
+                return true;
+            }
+        });
+
+        badge.animate().alpha(0.70f).setDuration(500).setStartDelay(3000).start();
         return badge;
     }
 
@@ -782,17 +795,17 @@ public class MainActivity extends AppCompatActivity {
         }
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("🎬 CineJoy TV Hub — By Dr. Muhammed");
+        builder.setTitle("ðŸŽ¬ CineJoy TV Hub â€” By Dr. Muhammed");
 
         String[] options = {
-            "🎯 مؤشر الماوس الافتراضي: " + (isMouseModeActive ? "مفعّل 🟢 (OK مطولاً للتبديل)" : "معطّل ⚪ (OK مطولاً للتفعيل)"),
-            "🛡️ حظر الإعلانات والبوب أب: " + (isAdBlockActive ? "مفعّل ✅" : "معطّل ❌"),
-            "⚡ سرعة التشغيل: " + currentPlaybackSpeed + "x",
-            "⏩ تخطي المقدمة (Skip 85s)",
-            "🔄 إعادة تحميل الصفحة",
-            "🧹 مسح الذاكرة المؤقتة (Clear Cache)",
-            "ℹ️ حول التطبيق والمطور",
-            "🚪 خروج من التطبيق"
+            "ðŸŽ¯ Ù…Ø¤Ø´Ø± Ø§Ù„Ù…Ø§ÙˆØ³ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ: " + (isMouseModeActive ? "Ù…ÙØ¹Ù‘Ù„ ðŸŸ¢ (Ø§Ø¶ØºØ· Ù„Ù„ØªØ¹Ø·ÙŠÙ„)" : "Ù…Ø¹Ø·Ù‘Ù„ âšª (Ø§Ø¶ØºØ· Ù„Ù„ØªÙØ¹ÙŠÙ„)"),
+            "ðŸ›¡ï¸ Ø­Ø¸Ø± Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª ÙˆØ§Ù„Ø¨ÙˆØ¨ Ø£Ø¨: " + (isAdBlockActive ? "Ù…ÙØ¹Ù‘Ù„ âœ…" : "Ù…Ø¹Ø·Ù‘Ù„ âŒ"),
+            "âš¡ Ø³Ø±Ø¹Ø© Ø§Ù„ØªØ´ØºÙŠÙ„: " + currentPlaybackSpeed + "x",
+            "â© ØªØ®Ø·ÙŠ Ø§Ù„Ù…Ù‚Ø¯Ù…Ø© (Skip 85s)",
+            "ðŸ”„ Ø¥Ø¹Ø§Ø¯Ø© ØªØ­Ù…ÙŠÙ„ Ø§Ù„ØµÙØ­Ø©",
+            "ðŸ§¹ Ù…Ø³Ø­ Ø§Ù„Ø°Ø§ÙƒØ±Ø© Ø§Ù„Ù…Ø¤Ù‚ØªØ© (Clear Cache)",
+            "â„¹ï¸ Ø­ÙˆÙ„ Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ ÙˆØ§Ù„Ù…Ø·ÙˆØ±",
+            "ðŸšª Ø®Ø±ÙˆØ¬ Ù…Ù† Ø§Ù„ØªØ·Ø¨ÙŠÙ‚"
         };
 
         builder.setItems(options, new DialogInterface.OnClickListener() {
@@ -805,7 +818,7 @@ public class MainActivity extends AppCompatActivity {
                     case 1:
                         isAdBlockActive = !isAdBlockActive;
                         Toast.makeText(MainActivity.this,
-                            isAdBlockActive ? "تم تفعيل حظر الإعلانات ✅" : "تم تعطيل حظر الإعلانات ❌",
+                            isAdBlockActive ? "ØªÙ… ØªÙØ¹ÙŠÙ„ Ø­Ø¸Ø± Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª âœ…" : "ØªÙ… ØªØ¹Ø·ÙŠÙ„ Ø­Ø¸Ø± Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª âŒ",
                             Toast.LENGTH_SHORT).show();
                         if (webView != null) webView.reload();
                         break;
@@ -823,7 +836,7 @@ public class MainActivity extends AppCompatActivity {
                             webView.clearCache(true);
                             CookieManager.getInstance().removeAllCookies(null);
                             webView.reload();
-                            Toast.makeText(MainActivity.this, "تم مسح الذاكرة وإعادة التحميل 🧹", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(MainActivity.this, "ØªÙ… Ù…Ø³Ø­ Ø§Ù„Ø°Ø§ÙƒØ±Ø© ÙˆØ¥Ø¹Ø§Ø¯Ø© Ø§Ù„ØªØ­Ù…ÙŠÙ„ ðŸ§¹", Toast.LENGTH_SHORT).show();
                         }
                         break;
                     case 6:
@@ -838,7 +851,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        builder.setNegativeButton("إغلاق", new DialogInterface.OnClickListener() {
+        builder.setNegativeButton("Ø¥ØºÙ„Ø§Ù‚", new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface d, int w) {
                 hideSystemUI();
@@ -862,7 +875,7 @@ public class MainActivity extends AppCompatActivity {
                 null
             );
         }
-        Toast.makeText(this, "⚡ سرعة الفيديو: " + currentPlaybackSpeed + "x", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "âš¡ Ø³Ø±Ø¹Ø© Ø§Ù„ÙÙŠØ¯ÙŠÙˆ: " + currentPlaybackSpeed + "x", Toast.LENGTH_SHORT).show();
     }
 
     private void skipIntro() {
@@ -871,43 +884,38 @@ public class MainActivity extends AppCompatActivity {
                 "(function() { var v = document.querySelector('video'); if (v) { v.currentTime += 85; } })()",
                 null
             );
-            Toast.makeText(this, "⏩ تم تخطي 85 ثانية (المقدمة)", Toast.LENGTH_SHORT).show();
+            Toast.makeText(this, "â© ØªÙ… ØªØ®Ø·ÙŠ 85 Ø«Ø§Ù†ÙŠØ© (Ø§Ù„Ù…Ù‚Ø¯Ù…Ø©)", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void showAboutDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("حول تطبيق CineJoy TV v1.4")
-            .setMessage("✨ CineJoy Pro Edition — Smart TV & Android\n" +
-                        "👨‍💻 تم التطوير والتخصيص بواسطة: Dr. Muhammed\n\n" +
-                        "• أداء فائق السرعة وخفيف 100% بدون أي تعليق\n" +
-                        "• مؤشر ماوس أصلي بالكامل للنقر داخل كافة المشغلات والإطارات\n" +
-                        "• تفعيل الماوس بضغطة مطولة على OK، والخروج بزر BACK\n" +
-                        "• تحكم سلس بتقديم وتأخير الفيديو بدون أي تعارض مع الأسهم\n" +
-                        "• حظر فوري للإعلانات والصفحات المنبثقة")
-            .setPositiveButton("حسناً", null)
+            .setTitle("Ø­ÙˆÙ„ ØªØ·Ø¨ÙŠÙ‚ CineJoy TV v1.5")
+            .setMessage("âœ¨ CineJoy Pro Edition â€” Smart TV & Android\n" +
+                        "ðŸ‘¨â€ðŸ’» ØªÙ… Ø§Ù„ØªØ·ÙˆÙŠØ± ÙˆØ§Ù„ØªØ®ØµÙŠØµ Ø¨ÙˆØ§Ø³Ø·Ø©: Dr. Muhammed\n\n" +
+                        "â€¢ ØªØ­ÙƒÙ… ÙØ§Ø¦Ù‚ Ø¨Ø§Ù„Ù…Ø§ÙˆØ³ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ Ù„Ø§Ø®ØªÙŠØ§Ø± Ø§Ù„ØªØ±Ø¬Ù…Ø© ÙˆØ¶Ø¨Ø· Ø§Ù„Ø¬ÙˆØ¯Ø© Ø¨Ø¯Ù‚Ø©\n" +
+                        "â€¢ ØªÙØ¹ÙŠÙ„ Ø§Ù„Ù…Ø§ÙˆØ³ ÙÙˆØ±Ø§Ù‹ Ø¨Ø§Ù„Ø¶ØºØ· Ø¹Ù„Ù‰ Ø§Ù„Ø´Ø§Ø±Ø©ØŒ Ø£Ùˆ Ø§Ù„Ø²Ø± Ø§Ù„Ø£ØµÙØ±ØŒ Ø£Ùˆ Ø¶ØºØ·Ø© Ù…Ø·ÙˆÙ„Ø© Ø¹Ù„Ù‰ OK\n" +
+                        "â€¢ Ø¯Ø¹Ù… Ø§Ù„ØªÙ†Ù‚Ù„ Ø§Ù„Ø·Ø¨ÙŠØ¹ÙŠ Ø¨Ø§Ù„Ø£Ø³Ù‡Ù… ÙˆØªÙ‚Ø¯ÙŠÙ… ÙˆØªØ£Ø®ÙŠØ± Ø§Ù„ÙÙŠØ¯ÙŠÙˆ\n" +
+                        "â€¢ Ø£Ø¯Ø§Ø¡ Ø³Ø±ÙŠØ¹ ÙˆØ®ÙÙŠÙ Ø¨Ø¯ÙˆÙ† Ø£ÙŠ Ø§Ø³ØªÙ‡Ù„Ø§Ùƒ Ø²Ø§Ø¦Ø¯ Ù„Ù„Ø°Ø§ÙƒØ±Ø©")
+            .setPositiveButton("Ø­Ø³Ù†Ø§Ù‹", null)
             .show();
     }
 
     /**
-     * ULTRA-LIGHTWEIGHT TV ENHANCEMENTS:
-     * - NO MutationObservers!
-     * - NO heavy setInterval loops!
-     * - NO CPU-hogging drop shadows!
-     * - Only clean, crisp focus outline and popup blocking.
+     * Injects Subtitle, Player Controls, and Clean TV Navigation Enhancements
      */
-    private void injectLightweightTvEnhancements() {
+    private void injectTvSubtitleAndControlEnhancements() {
         if (webView == null) return;
 
         String tvEngineJs = "(function() {" +
             "  if (window.__cinejoyTvInjected) return;" +
             "  window.__cinejoyTvInjected = true;" +
 
-            // 1. Crisp, lightweight focus outline for Android TV (zero GPU lag)
+            // 1. High contrast crisp outline for TV navigation
             "  var style = document.createElement('style');" +
             "  style.id = 'cinejoy-tv-styles';" +
             "  style.textContent = `" +
-            "    :focus, .tv-focused {" +
+            "    :focus, .tv-focused, [data-focus=\"true\"] {" +
             "      outline: 3px solid #95FF50 !important;" +
             "      outline-offset: 2px !important;" +
             "      border-radius: 6px !important;" +
@@ -918,17 +926,20 @@ public class MainActivity extends AppCompatActivity {
             "  `;" +
             "  (document.head || document.documentElement).appendChild(style);" +
 
-            // 2. Block Popups & Ads
+            // 2. Block Popups
             "  window.open = function() { return null; };" +
             "  try { localStorage.setItem('addies', 'false'); } catch(e){}" +
 
-            // 3. Make interactive elements focusable on initial page load (one-time pass, NO loops)
-            "  setTimeout(function() {" +
-            "    var els = document.querySelectorAll('a, button, input, select, [role=\"button\"], [onclick]');" +
+            // 3. Make interactive elements, subtitle options, and dropdown items focusable
+            "  function scanAndEnableFocus() {" +
+            "    var selectors = 'a, button, input, select, [role=\"button\"], [role=\"menuitem\"], [role=\"option\"], .art-subtitle, .art-setting, .vjs-menu-item, li[data-val], .dropdown-item';" +
+            "    var els = document.querySelectorAll(selectors);" +
             "    for (var i = 0; i < els.length; i++) {" +
             "      if (!els[i].hasAttribute('tabindex')) els[i].setAttribute('tabindex', '0');" +
             "    }" +
-            "  }, 1000);" +
+            "  }" +
+            "  setTimeout(scanAndEnableFocus, 1000);" +
+            "  document.addEventListener('click', function() { setTimeout(scanAndEnableFocus, 300); }, true);" +
 
             "})();";
 
@@ -949,15 +960,15 @@ public class MainActivity extends AppCompatActivity {
 
     private void showExitConfirmDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("تطبيق CineJoy")
-            .setMessage("هل تريد حقاً الخروج من التطبيق؟")
-            .setPositiveButton("نعم (خروج)", new DialogInterface.OnClickListener() {
+            .setTitle("ØªØ·Ø¨ÙŠÙ‚ CineJoy")
+            .setMessage("Ù‡Ù„ ØªØ±ÙŠØ¯ Ø­Ù‚Ø§Ù‹ Ø§Ù„Ø®Ø±ÙˆØ¬ Ù…Ù† Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ØŸ")
+            .setPositiveButton("Ù†Ø¹Ù… (Ø®Ø±ÙˆØ¬)", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
                     finish();
                 }
             })
-            .setNegativeButton("إلغاء", new DialogInterface.OnClickListener() {
+            .setNegativeButton("Ø¥Ù„ØºØ§Ø¡", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
                     hideSystemUI();
@@ -1021,5 +1032,3 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 }
-
-

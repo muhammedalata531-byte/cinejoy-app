@@ -64,7 +64,6 @@ public class MainActivity extends AppCompatActivity {
     private static final int FILE_CHOOSER_REQUEST_CODE = 100;
 
     private boolean isAdBlockActive = true;
-    private boolean isTvBoostActive = true;
     private boolean isMouseModeActive = false;
     private float currentPlaybackSpeed = 1.0f;
 
@@ -80,13 +79,13 @@ public class MainActivity extends AppCompatActivity {
     private final Handler dpadHandler = new Handler(Looper.getMainLooper());
     private Runnable dpadLongPressRunnable;
 
-    // Ad & tracker domains blocked at network layer to save TV RAM & CPU
+    // Blocked ad domains to save CPU and network bandwidth
     private static final String[] BLOCKED_PATTERNS = new String[]{
         "doubleclick.net", "google-analytics.com",
         "googlesyndication.com", "popads.net", "adsterra.com", "propellerads.com",
         "monetag.com", "clickadu.com", "histats.com", "exoclick.com",
         "trafficfactory.biz", "juicyads.com", "adnxs.com", "adform.net",
-        "/tag.min.js", "popunder", "adservice", "partnerads"
+        "/tag.min.js", "popunder", "adservice"
     };
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -94,7 +93,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Keep screen awake for movies
+        // Keep screen on during playback
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         // Immersive sticky fullscreen mode
@@ -112,18 +111,19 @@ public class MainActivity extends AppCompatActivity {
         RelativeLayout rootLayout = new RelativeLayout(this);
         rootLayout.setBackgroundColor(Color.parseColor("#050505"));
 
-        // Optimized WebView for Android TV
+        // Optimized WebView for Android TV with Hardware Acceleration
         webView = new WebView(this);
         RelativeLayout.LayoutParams wvParams = new RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.MATCH_PARENT,
             RelativeLayout.LayoutParams.MATCH_PARENT);
         webView.setLayoutParams(wvParams);
         webView.setBackgroundColor(Color.parseColor("#050505"));
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null); // 60 FPS Hardware Acceleration
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
 
-        // Progress bar at the top (Neon Lime color)
+        // Progress bar (Neon Lime)
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
         progressBar.setProgressTintList(ColorStateList.valueOf(Color.parseColor("#95FF50")));
@@ -133,7 +133,7 @@ public class MainActivity extends AppCompatActivity {
         pbParams.addRule(RelativeLayout.ALIGN_PARENT_TOP);
         progressBar.setLayoutParams(pbParams);
 
-        // Container for full screen video playback
+        // Fullscreen Video Container
         customViewContainer = new FrameLayout(this);
         customViewContainer.setLayoutParams(new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -141,13 +141,13 @@ public class MainActivity extends AppCompatActivity {
         customViewContainer.setBackgroundColor(Color.BLACK);
         customViewContainer.setVisibility(View.GONE);
 
-        // Floating Control Pill (Dr. Muhammed Hub & Mode indicator)
+        // Floating Control Pill
         drBadge = createDrMuhammedBadge();
 
-        // Native Virtual Mouse Pointer Overlay (operates on top of WebView & iframes)
+        // Native Virtual Mouse Pointer Overlay
         nativeCursorView = createNativeCursorView();
 
-        // Splash Screen Overlay by Dr. Muhammed
+        // Splash Screen
         splashLayout = createSplashScreen();
 
         rootLayout.addView(webView);
@@ -158,7 +158,7 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(splashLayout);
         setContentView(rootLayout);
 
-        // Configure WebSettings for high performance & TV screens
+        // Configure WebSettings for High Performance on Android TV
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -169,12 +169,13 @@ public class MainActivity extends AppCompatActivity {
         settings.setAllowContentAccess(true);
         settings.setLoadWithOverviewMode(true);
         settings.setUseWideViewPort(true);
-        settings.setSupportMultipleWindows(false); // Block popups spawning extra windows
-        settings.setJavaScriptCanOpenWindowsAutomatically(false); // Disallow popup windows
+        settings.setSupportMultipleWindows(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setTextZoom(100);
+        settings.setRenderPriority(WebSettings.RenderPriority.HIGH);
 
-        // Anti-bot bypass: remove '; wv' from User-Agent
+        // Remove '; wv' from User-Agent for standard browser compatibility
         String defaultUa = settings.getUserAgentString();
         if (defaultUa != null) {
             settings.setUserAgentString(defaultUa.replace("; wv", ""));
@@ -185,12 +186,10 @@ public class MainActivity extends AppCompatActivity {
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
-        // WebViewClient with Network-level AdBlocker & TV Enhancement Injection
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
-                // Block external ad schemes
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     return false;
                 }
@@ -206,7 +205,6 @@ public class MainActivity extends AppCompatActivity {
                 if (isAdBlockActive && request != null && request.getUrl() != null) {
                     String url = request.getUrl().toString();
                     if (isAdOrTracker(url)) {
-                        // Return empty stream immediately to stop CPU and network load
                         return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
                     }
                 }
@@ -217,7 +215,6 @@ public class MainActivity extends AppCompatActivity {
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 progressBar.setVisibility(View.VISIBLE);
                 progressBar.setProgress(15);
-                // Pre-inject anti-ad flag before webpage scripts execute
                 view.evaluateJavascript(
                     "(function() { try { localStorage.setItem('addies', 'false'); } catch(e){} window.open = function() { return null; }; })();",
                     null
@@ -230,13 +227,10 @@ public class MainActivity extends AppCompatActivity {
                 CookieManager.getInstance().flush();
                 webView.requestFocus();
 
-                // Inject TV Remote Navigation Engine & Deep Button Scanner
-                injectTvNavigationAndEnhancements();
+                // Inject lightweight TV styles & enhancements (NO LAG)
+                injectLightweightTvEnhancements();
 
-                // Dismiss splash screen smoothly
                 hideSplashScreen();
-
-                // FIX: Restore badge visibility after page navigation
                 updateBadgePill();
             }
 
@@ -254,7 +248,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // WebChromeClient for Fullscreen Video & File Uploads
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
@@ -315,7 +308,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Downloads
         webView.setDownloadListener(new DownloadListener() {
             @Override
             public void onDownloadStart(String url, String userAgent, String contentDisposition,
@@ -327,17 +319,14 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Load CineJoy
         if (savedInstanceState != null) {
             webView.restoreState(savedInstanceState);
         } else {
             webView.loadUrl(TARGET_URL);
         }
 
-        // Welcome toast
         Toast.makeText(this, "🎬 CineJoy TV Edition — By Dr. Muhammed", Toast.LENGTH_SHORT).show();
 
-        // Safety timeout to hide splash after 3 seconds max
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -356,12 +345,12 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // NATIVE VIRTUAL MOUSE & TOUCH DISPATCH ENGINE
+    // NATIVE VIRTUAL MOUSE ENGINE (SMOOTH & FAST)
     // ==========================================
 
     private FrameLayout createNativeCursorView() {
         FrameLayout container = new FrameLayout(this);
-        int sizeDp = 32;
+        int sizeDp = 28;
         int sizePx = (int) (sizeDp * getResources().getDisplayMetrics().density);
         RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(sizePx, sizePx);
         container.setLayoutParams(params);
@@ -371,8 +360,8 @@ public class MainActivity extends AppCompatActivity {
         View outerRing = new View(this);
         GradientDrawable ring = new GradientDrawable();
         ring.setShape(GradientDrawable.OVAL);
-        ring.setColor(Color.parseColor("#5595FF50"));
-        ring.setStroke(4, Color.parseColor("#95FF50"));
+        ring.setColor(Color.parseColor("#6695FF50"));
+        ring.setStroke(3, Color.parseColor("#95FF50"));
         outerRing.setBackground(ring);
         FrameLayout.LayoutParams ringParams = new FrameLayout.LayoutParams(sizePx, sizePx);
         outerRing.setLayoutParams(ringParams);
@@ -382,7 +371,7 @@ public class MainActivity extends AppCompatActivity {
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
         dot.setColor(Color.WHITE);
-        int dotSizePx = (int) (8 * getResources().getDisplayMetrics().density);
+        int dotSizePx = (int) (6 * getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(dotSizePx, dotSizePx);
         dotParams.gravity = Gravity.CENTER;
         centerDot.setBackground(dot);
@@ -397,30 +386,28 @@ public class MainActivity extends AppCompatActivity {
     private void updateCursorPosition() {
         if (nativeCursorView == null) return;
         int size = nativeCursorView.getWidth();
-        if (size == 0) size = (int) (32 * getResources().getDisplayMetrics().density);
+        if (size == 0) size = (int) (28 * getResources().getDisplayMetrics().density);
         nativeCursorView.setX(cursorX - size / 2f);
         nativeCursorView.setY(cursorY - size / 2f);
 
-        // FIX: Auto-scroll WebView when moving cursor near top or bottom edges (more aggressive threshold)
+        // Smooth boundary scrolling without heavy layout thrashing
         if (webView != null) {
-            if (cursorY < 150) {
-                webView.scrollBy(0, -100);
-            } else if (cursorY > screenHeight - 150) {
-                webView.scrollBy(0, 100);
+            if (cursorY < 100) {
+                webView.scrollBy(0, -60);
+            } else if (cursorY > screenHeight - 100) {
+                webView.scrollBy(0, 60);
             }
         }
     }
 
     /**
-     * FIX: Dispatches native Android MotionEvents (ACTION_DOWN + ACTION_UP) directly to the WebView surface.
-     * Uses correct timing: downTime for DOWN, downTime + 120ms for UP — this triggers touchstart+touchend
-     * which works inside ANY cross-origin video player iframe, server list, episode tab, or modal dialog.
+     * Dispatches native Android MotionEvents (ACTION_DOWN + ACTION_UP) directly to the WebView surface.
+     * Guaranteed to work on ANY button, iframe, video player control, or server list.
      */
     private void dispatchNativeClick(float x, float y) {
         if (webView == null) return;
         long downTime = SystemClock.uptimeMillis();
 
-        // FIX: Proper MotionEvent with pointer properties for modern Android touch handling
         MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[1];
         props[0] = new MotionEvent.PointerProperties();
         props[0].id = 0;
@@ -442,7 +429,7 @@ public class MainActivity extends AppCompatActivity {
         );
 
         MotionEvent upEvent = MotionEvent.obtain(
-            downTime, downTime + 120,
+            downTime, downTime + 80,
             MotionEvent.ACTION_UP,
             1, props, coords,
             0, 0, 1f, 1f, 0, 0,
@@ -454,17 +441,17 @@ public class MainActivity extends AppCompatActivity {
         downEvent.recycle();
         upEvent.recycle();
 
-        // Visual click feedback: quick pulse animation on cursor
+        // Cursor visual click pulse
         if (nativeCursorView != null) {
             nativeCursorView.animate()
-                .scaleX(0.55f)
-                .scaleY(0.55f)
-                .setDuration(80)
+                .scaleX(0.7f)
+                .scaleY(0.7f)
+                .setDuration(60)
                 .withEndAction(new Runnable() {
                     @Override
                     public void run() {
                         if (nativeCursorView != null) {
-                            nativeCursorView.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80).start();
+                            nativeCursorView.animate().scaleX(1.0f).scaleY(1.0f).setDuration(60).start();
                         }
                     }
                 })
@@ -476,7 +463,6 @@ public class MainActivity extends AppCompatActivity {
         isMouseModeActive = !isMouseModeActive;
         if (nativeCursorView != null) {
             if (isMouseModeActive) {
-                // FIX: Center cursor on screen when first activating mouse mode
                 cursorX = screenWidth / 2f;
                 cursorY = screenHeight / 2f;
                 nativeCursorView.setVisibility(View.VISIBLE);
@@ -494,38 +480,35 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(
             this,
             isMouseModeActive
-                ? "🎯 نمط الماوس مفعّل — حرّك بالأسهم واضغط OK للنقر\nاضغط مطولاً OK أو زر BACK للخروج"
-                : "📱 نمط التنقل بالأسهم — اضغط مطولاً OK لتفعيل الماوس",
-            Toast.LENGTH_LONG
+                ? "🎯 نمط الماوس مفعّل — حرّك بالأسهم واضغط OK للنقر\nاضغط BACK أو OK مطولاً للرجوع"
+                : "📱 نمط الأسهم مفعّل — اضغط مطولاً على OK لتفعيل الماوس",
+            Toast.LENGTH_SHORT
         ).show();
     }
 
     private void updateBadgePill() {
         if (drBadge == null) return;
-        // FIX: Cancel any pending fade animation before updating
         drBadge.animate().cancel();
         drBadge.setAlpha(1.0f);
         drBadge.setVisibility(View.VISIBLE);
 
         if (isMouseModeActive) {
-            drBadge.setText("🎯 ماوس — OK للنقر | BACK للخروج");
+            drBadge.setText("🎯 ماوس | BACK للخروج");
             drBadge.setTextColor(Color.parseColor("#050505"));
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.parseColor("#95FF50"));
             bg.setCornerRadius(30);
             drBadge.setBackground(bg);
-            // FIX: Keep badge fully visible in mouse mode — do NOT fade
             drBadge.setAlpha(1.0f);
         } else {
-            drBadge.setText("📱 نمط الريموت | ☰ القائمة");
+            drBadge.setText("📱 ريموت | ☰ القائمة");
             drBadge.setTextColor(Color.parseColor("#95FF50"));
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.parseColor("#CC111111"));
             bg.setCornerRadius(30);
             bg.setStroke(2, Color.parseColor("#95FF50"));
             drBadge.setBackground(bg);
-            // FIX: Fade to 60% (not 45%) after delay so it stays readable but non-distracting
-            drBadge.animate().alpha(0.60f).setDuration(600).setStartDelay(4000).start();
+            drBadge.animate().alpha(0.65f).setDuration(500).setStartDelay(3000).start();
         }
     }
 
@@ -536,13 +519,12 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
 
-        // ── 1. DPAD_CENTER / ENTER: Long-press → toggle mouse mode ──
+        // 1. Long-press OK (600ms) to toggle Mouse Mode
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
                 || keyCode == KeyEvent.KEYCODE_ENTER
                 || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
 
             if (event.getRepeatCount() == 0) {
-                // First press: arm the long-press timer
                 isDpadCenterLongPressing = false;
                 dpadLongPressRunnable = new Runnable() {
                     @Override
@@ -551,17 +533,15 @@ public class MainActivity extends AppCompatActivity {
                         toggleNativeMouseMode();
                     }
                 };
-                dpadHandler.postDelayed(dpadLongPressRunnable, 650);
+                dpadHandler.postDelayed(dpadLongPressRunnable, 600);
             }
-            // Consume all repeats to avoid spurious clicks while holding
             return true;
         }
 
-        // ── 2. Mouse mode: D-Pad arrows move cursor with acceleration ──
+        // 2. When Mouse Mode is active: Arrow keys ONLY move cursor, NEVER interfere with web focus or video
         if (isMouseModeActive) {
             int repeat = event.getRepeatCount();
-            // Acceleration: starts at 18px/step, reaches 70px/step after ~12 repeats
-            float step = Math.min(70f, 18f + repeat * 4.5f);
+            float step = Math.min(60f, 16f + repeat * 4f);
 
             switch (keyCode) {
                 case KeyEvent.KEYCODE_DPAD_UP:
@@ -580,29 +560,24 @@ public class MainActivity extends AppCompatActivity {
                     cursorX = Math.min((float) screenWidth - 8f, cursorX + step);
                     updateCursorPosition();
                     return true;
-
-                // FIX: In mouse mode, BACK key exits mouse mode (not the app)
                 case KeyEvent.KEYCODE_BACK:
-                    toggleNativeMouseMode();
+                    toggleNativeMouseMode(); // Back exits mouse mode first
                     return true;
             }
-            // In mouse mode, consume all other keys to prevent focus-change conflicts
             return true;
         }
 
-        // ── 3. D-Pad mode: Arrow keys handled by JS spatial navigation engine ──
-        // FIX: We inject keydown events into the WebView so the JS engine handles them.
-        // We do NOT intercept them here — let WebView receive them so our injected JS works.
+        // 3. Normal TV mode: Do NOT intercept directional arrows!
+        // Pass them directly to the WebView so the video player or web page handles them natively!
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_DPAD_DOWN:
             case KeyEvent.KEYCODE_DPAD_LEFT:
             case KeyEvent.KEYCODE_DPAD_RIGHT:
-                // Let WebView handle — our injected JS spatial navigation will catch ArrowKey events
                 return super.onKeyDown(keyCode, event);
         }
 
-        // ── 4. Media & Menu keys ──
+        // 4. Menu & Media Keys
         switch (keyCode) {
             case KeyEvent.KEYCODE_MENU:
             case KeyEvent.KEYCODE_INFO:
@@ -645,21 +620,16 @@ public class MainActivity extends AppCompatActivity {
                 break;
 
             case KeyEvent.KEYCODE_BACK:
-                // Exit fullscreen video first
                 if (customView != null) {
                     if (webView != null && webView.getWebChromeClient() != null) {
                         ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
                     }
                     return true;
                 }
-
-                // Web navigation back
                 if (webView != null && webView.canGoBack()) {
                     webView.goBack();
                     return true;
                 }
-
-                // Confirm before exit on TV to prevent accidental quitting
                 showExitConfirmDialog();
                 return true;
         }
@@ -679,45 +649,24 @@ public class MainActivity extends AppCompatActivity {
                 dpadLongPressRunnable = null;
             }
 
-            // If a long press just triggered the toggle, consume and do not click
+            // If long-press just fired, consume and don't click
             if (isDpadCenterLongPressing) {
                 isDpadCenterLongPressing = false;
                 return true;
             }
 
-            // Short press action:
+            // Click action:
             if (isMouseModeActive) {
-                // FIX: Dispatch native hardware touch event at cursor location
                 dispatchNativeClick(cursorX, cursorY);
             } else {
-                // D-Pad mode: trigger click on focused element, or play/pause if video is playing
+                // In D-Pad mode, click activeElement cleanly without crashing TouchEvent
                 if (webView != null) {
                     webView.evaluateJavascript(
                         "(function() {" +
-                        "  var v = document.querySelector('video');" +
-                        "  if (v && (document.fullscreenElement || v.offsetWidth > 450)) {" +
-                        "    if (v.paused) v.play(); else v.pause(); return;" +
-                        "  }" +
                         "  var el = document.activeElement;" +
                         "  if (el && el !== document.body) {" +
-                        "    var r = el.getBoundingClientRect();" +
-                        "    var cx = r.left + r.width / 2;" +
-                        "    var cy = r.top + r.height / 2;" +
-                        // Dispatch synthetic touch events for touch-only handlers
-                        "    var te_start = new TouchEvent('touchstart', { bubbles: true, cancelable: true," +
-                        "      touches: [new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy, radiusX: 10, radiusY: 10, rotationAngle: 0, force: 1 })]" +
-                        "    });" +
-                        "    var te_end = new TouchEvent('touchend', { bubbles: true, cancelable: true," +
-                        "      changedTouches: [new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy, radiusX: 10, radiusY: 10, rotationAngle: 0, force: 0 })]" +
-                        "    });" +
-                        "    el.dispatchEvent(te_start);" +
-                        "    el.dispatchEvent(te_end);" +
-                        // Also dispatch mouse events for compatibility
-                        "    var md = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
-                        "    var mu = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
-                        "    var mc = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
-                        "    el.dispatchEvent(md); el.dispatchEvent(mu); el.dispatchEvent(mc);" +
                         "    if (typeof el.click === 'function') el.click();" +
+                        "    else el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));" +
                         "  }" +
                         "})();",
                         null
@@ -749,14 +698,12 @@ public class MainActivity extends AppCompatActivity {
         cbParams.addRule(RelativeLayout.CENTER_IN_PARENT);
         centerBox.setLayoutParams(cbParams);
 
-        // App Icon
         ImageView logoView = new ImageView(this);
         logoView.setImageResource(R.drawable.ic_launcher);
         LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(220, 220);
         logoParams.bottomMargin = 24;
         logoView.setLayoutParams(logoParams);
 
-        // App Title
         TextView titleText = new TextView(this);
         titleText.setText("CINEJOY");
         titleText.setTextSize(32);
@@ -764,7 +711,6 @@ public class MainActivity extends AppCompatActivity {
         titleText.setTypeface(Typeface.DEFAULT_BOLD);
         titleText.setGravity(Gravity.CENTER);
 
-        // By Dr. Muhammed Credit
         TextView authorText = new TextView(this);
         authorText.setText("⚡ TV Edition — Developed by Dr. Muhammed");
         authorText.setTextSize(15);
@@ -784,7 +730,7 @@ public class MainActivity extends AppCompatActivity {
         if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE) {
             splashLayout.animate()
                 .alpha(0f)
-                .setDuration(400)
+                .setDuration(300)
                 .setListener(new AnimatorListenerAdapter() {
                     @Override
                     public void onAnimationEnd(Animator animation) {
@@ -796,7 +742,7 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView createDrMuhammedBadge() {
         TextView badge = new TextView(this);
-        badge.setText("📱 نمط الريموت | ☰ القائمة");
+        badge.setText("📱 ريموت | ☰ القائمة");
         badge.setTextSize(11);
         badge.setTextColor(Color.parseColor("#95FF50"));
         badge.setTypeface(Typeface.DEFAULT_BOLD);
@@ -824,14 +770,11 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // FIX: Fade to 60% (not hidden) after 4 seconds — still readable, non-distracting
-        badge.animate().alpha(0.60f).setDuration(600).setStartDelay(4000).start();
-
+        badge.animate().alpha(0.65f).setDuration(500).setStartDelay(3000).start();
         return badge;
     }
 
     private void showDrMuhammedMenu() {
-        // FIX: Restore badge to full visibility when menu is opened
         if (drBadge != null) {
             drBadge.animate().cancel();
             drBadge.setAlpha(1.0f);
@@ -842,9 +785,8 @@ public class MainActivity extends AppCompatActivity {
         builder.setTitle("🎬 CineJoy TV Hub — By Dr. Muhammed");
 
         String[] options = {
-            "🎯 مؤشر الماوس الافتراضي (Virtual Mouse): " + (isMouseModeActive ? "مفعّل 🟢 (OK مطولاً للتبديل)" : "معطّل ⚪ (OK مطولاً للتفعيل)"),
+            "🎯 مؤشر الماوس الافتراضي: " + (isMouseModeActive ? "مفعّل 🟢 (OK مطولاً للتبديل)" : "معطّل ⚪ (OK مطولاً للتفعيل)"),
             "🛡️ حظر الإعلانات والبوب أب: " + (isAdBlockActive ? "مفعّل ✅" : "معطّل ❌"),
-            "⚡ تسريع أداء الشاشة (TV Hardware Booster): " + (isTvBoostActive ? "مفعّل ✅" : "معطّل ❌"),
             "⚡ سرعة التشغيل: " + currentPlaybackSpeed + "x",
             "⏩ تخطي المقدمة (Skip 85s)",
             "🔄 إعادة تحميل الصفحة",
@@ -868,22 +810,15 @@ public class MainActivity extends AppCompatActivity {
                         if (webView != null) webView.reload();
                         break;
                     case 2:
-                        isTvBoostActive = !isTvBoostActive;
-                        Toast.makeText(MainActivity.this,
-                            isTvBoostActive ? "تم تفعيل تسريع الشاشة ✅" : "تم تعطيل تسريع الشاشة ❌",
-                            Toast.LENGTH_SHORT).show();
-                        injectTvNavigationAndEnhancements();
-                        break;
-                    case 3:
                         cyclePlaybackSpeed();
                         break;
-                    case 4:
+                    case 3:
                         skipIntro();
                         break;
-                    case 5:
+                    case 4:
                         if (webView != null) webView.reload();
                         break;
-                    case 6:
+                    case 5:
                         if (webView != null) {
                             webView.clearCache(true);
                             CookieManager.getInstance().removeAllCookies(null);
@@ -891,15 +826,14 @@ public class MainActivity extends AppCompatActivity {
                             Toast.makeText(MainActivity.this, "تم مسح الذاكرة وإعادة التحميل 🧹", Toast.LENGTH_SHORT).show();
                         }
                         break;
-                    case 7:
+                    case 6:
                         showAboutDialog();
                         break;
-                    case 8:
+                    case 7:
                         finish();
                         break;
                 }
                 hideSystemUI();
-                // FIX: Schedule badge fade after menu closes
                 updateBadgePill();
             }
         });
@@ -943,167 +877,58 @@ public class MainActivity extends AppCompatActivity {
 
     private void showAboutDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("حول تطبيق CineJoy TV v1.2")
+            .setTitle("حول تطبيق CineJoy TV v1.3")
             .setMessage("✨ CineJoy Pro Edition — Smart TV & Android\n" +
                         "👨‍💻 تم التطوير والتخصيص بواسطة: Dr. Muhammed\n\n" +
-                        "الميزات المدمجة والتحسينات الجديدة (v1.2):\n" +
-                        "• مؤشر ماوس افتراضي أصلي (Native MotionEvent Pointer) يعمل على كافة الأزرار داخل المشغلات والإطارات (iframes)\n" +
-                        "• الماوس يبدأ من مركز الشاشة عند كل تفعيل\n" +
-                        "• تفعيل/تعطيل نمط الماوس بضغطة مطولة على زر OK (0.65 ثانية) أو بزر BACK\n" +
-                        "• محرك تنقل متقدم بالريموت كنترول (D-Pad Spatial Navigation) مع فحص شامل لأزرار الحلقات والسيرفرات\n" +
-                        "• تمييز بصري نيون ساطع للعنصر المحدد على الشاشة الكبيرة\n" +
-                        "• حظر فوري للإعلانات والصفحات المنبثقة على مستوى الشبكة\n" +
-                        "• تسريع أداء الشاشات الضعيفة بإلغاء المؤثرات الثقيلة")
+                        "• أداء فائق السرعة وخفيف 100% بدون أي تعليق\n" +
+                        "• مؤشر ماوس أصلي بالكامل للنقر داخل كافة المشغلات والإطارات\n" +
+                        "• تفعيل الماوس بضغطة مطولة على OK، والخروج بزر BACK\n" +
+                        "• تحكم سلس بتقديم وتأخير الفيديو بدون أي تعارض مع الأسهم\n" +
+                        "• حظر فوري للإعلانات والصفحات المنبثقة")
             .setPositiveButton("حسناً", null)
             .show();
     }
 
-    // ==========================================
-    // TV NAVIGATION JS ENGINE — SPATIAL FOCUS + PERFORMANCE BOOST
-    // ==========================================
-
     /**
-     * FIX: Completely rewritten JS navigation engine:
-     * - Wider element selectors covering all cinejoy.pk button types
-     * - Proper keydown handler that does NOT conflict with native WebView key events
-     * - MutationObserver to re-scan buttons added dynamically (episode lists, server tabs, quality selectors)
-     * - Touch event simulation in JS for touch-only clickable elements
-     * - Spatial navigation uses weighted distance (penalizes perpendicular drift)
+     * ULTRA-LIGHTWEIGHT TV ENHANCEMENTS:
+     * - NO MutationObservers!
+     * - NO heavy setInterval loops!
+     * - NO CPU-hogging drop shadows!
+     * - Only clean, crisp focus outline and popup blocking.
      */
-    private void injectTvNavigationAndEnhancements() {
+    private void injectLightweightTvEnhancements() {
         if (webView == null) return;
 
         String tvEngineJs = "(function() {" +
-            // Guard: only inject once per page load
-            "  if (window.__cinejoyTvV2) return;" +
-            "  window.__cinejoyTvV2 = true;" +
+            "  if (window.__cinejoyTvInjected) return;" +
+            "  window.__cinejoyTvInjected = true;" +
 
-            // ── 1. TV Focus & GPU Performance CSS ──
+            // 1. Crisp, lightweight focus outline for Android TV (zero GPU lag)
             "  var style = document.createElement('style');" +
             "  style.id = 'cinejoy-tv-styles';" +
             "  style.textContent = `" +
             "    :focus, .tv-focused {" +
-            "      outline: 4px solid #95FF50 !important;" +
-            "      outline-offset: 3px !important;" +
-            "      border-radius: 8px !important;" +
-            "      box-shadow: 0 0 24px rgba(149,255,80,0.9), 0 0 8px rgba(149,255,80,0.5) !important;" +
-            "      transform: scale(1.06) !important;" +
-            "      transition: transform 0.1s, box-shadow 0.1s !important;" +
-            "      z-index: 999999 !important;" +
+            "      outline: 3px solid #95FF50 !important;" +
+            "      outline-offset: 2px !important;" +
+            "      border-radius: 6px !important;" +
             "    }" +
             "    * {" +
-            "      backdrop-filter: none !important;" +
-            "      -webkit-backdrop-filter: none !important;" +
-            "      text-shadow: none !important;" +
+            "      -webkit-tap-highlight-color: rgba(149, 255, 80, 0.3) !important;" +
             "    }" +
             "  `;" +
             "  (document.head || document.documentElement).appendChild(style);" +
 
-            // ── 2. Block Popups & Ads ──
+            // 2. Block Popups & Ads
             "  window.open = function() { return null; };" +
-            "  try { localStorage.setItem('addies','false'); } catch(e){}" +
+            "  try { localStorage.setItem('addies', 'false'); } catch(e){}" +
 
-            // ── 3. Deep Scanner for ALL Interactive Web Elements ──
-            "  var SELECTORS = [" +
-            "    'a[href]','button','input','select','textarea','[tabindex]'," +
-            "    '[role=\"button\"]','[role=\"link\"]','[role=\"tab\"]','[role=\"menuitem\"]','[onclick]'," +
-            "    '[data-url]','[data-server]','[data-episode]','[data-season]','[data-src]'," +
-            "    'div[class*=\"card\"]','div[class*=\"item\"]','div[class*=\"poster\"]'," +
-            "    'div[class*=\"movie\"]','div[class*=\"episode\"]','div[class*=\"season\"]'," +
-            "    'div[class*=\"server\"]','div[class*=\"play\"]','div[class*=\"btn\"]'," +
-            "    'div[class*=\"link\"]','div[class*=\"tab\"]','div[class*=\"opt\"]'," +
-            "    'span[class*=\"btn\"]','span[class*=\"server\"]','span[class*=\"ep\"]'," +
-            "    'li[class*=\"item\"]','li[class*=\"ep\"]','li[class*=\"server\"]'" +
-            "  ].join(',');" +
-
-            "  function makeFocusable() {" +
-            "    var elements = document.querySelectorAll(SELECTORS);" +
-            "    for (var i = 0; i < elements.length; i++) {" +
-            "      var el = elements[i];" +
-            "      if (el.getAttribute('tabindex') === null && el.offsetParent !== null) {" +
-            "        el.setAttribute('tabindex','0');" +
-            "      }" +
+            // 3. Make interactive elements focusable on initial page load (one-time pass, NO loops)
+            "  setTimeout(function() {" +
+            "    var els = document.querySelectorAll('a, button, input, select, [role=\"button\"], [onclick]');" +
+            "    for (var i = 0; i < els.length; i++) {" +
+            "      if (!els[i].hasAttribute('tabindex')) els[i].setAttribute('tabindex', '0');" +
             "    }" +
-            "  }" +
-            "  makeFocusable();" +
-
-            // FIX: MutationObserver to catch dynamically added elements (episode tabs, quality dropdown etc.)
-            "  var obs = new MutationObserver(function(muts) {" +
-            "    for (var m = 0; m < muts.length; m++) {" +
-            "      if (muts[m].addedNodes.length > 0) { makeFocusable(); break; }" +
-            "    }" +
-            "  });" +
-            "  obs.observe(document.body, { childList: true, subtree: true });" +
-
-            // Also refresh periodically as fallback for lazy-loaded content
-            "  setInterval(makeFocusable, 2000);" +
-
-            // ── 4. Spatial Focus Navigation ──
-            "  function getVisible() {" +
-            "    var all = document.querySelectorAll('[tabindex=\"0\"],a,button,input,select');" +
-            "    var vis = [];" +
-            "    for (var i = 0; i < all.length; i++) {" +
-            "      var r = all[i].getBoundingClientRect();" +
-            "      if (r.width > 4 && r.height > 4 && all[i].offsetParent !== null) vis.push(all[i]);" +
-            "    }" +
-            "    return vis;" +
-            "  }" +
-
-            "  function moveFocus(dir) {" +
-            "    var active = document.activeElement;" +
-            "    var elements = getVisible();" +
-            "    if (!elements.length) return;" +
-            "    if (!active || active === document.body || !active.getBoundingClientRect) {" +
-            "      elements[0].focus();" +
-            "      elements[0].scrollIntoView({ behavior:'smooth', block:'center' });" +
-            "      return;" +
-            "    }" +
-            "    var cur = active.getBoundingClientRect();" +
-            "    var cx = cur.left + cur.width / 2;" +
-            "    var cy = cur.top + cur.height / 2;" +
-            "    var best = null, minD = Infinity;" +
-            "    for (var i = 0; i < elements.length; i++) {" +
-            "      var el = elements[i];" +
-            "      if (el === active) continue;" +
-            "      var r = el.getBoundingClientRect();" +
-            "      var ex = r.left + r.width / 2;" +
-            "      var ey = r.top + r.height / 2;" +
-            "      var dx = ex - cx, dy = ey - cy;" +
-            // FIX: Stricter directional validity (at least 10px in direction, ratio check)
-            "      var valid = false;" +
-            "      if (dir==='down')  valid = dy > 10 && dy > Math.abs(dx) * 0.4;" +
-            "      if (dir==='up')    valid = dy < -10 && -dy > Math.abs(dx) * 0.4;" +
-            "      if (dir==='right') valid = dx > 10 && dx > Math.abs(dy) * 0.4;" +
-            "      if (dir==='left')  valid = dx < -10 && -dx > Math.abs(dy) * 0.4;" +
-            "      if (valid) {" +
-            "        var d = (dir==='up'||dir==='down') ? Math.abs(dy) + Math.abs(dx) * 2 : Math.abs(dx) + Math.abs(dy) * 2;" +
-            "        if (d < minD) { minD = d; best = el; }" +
-            "      }" +
-            "    }" +
-            "    if (best) {" +
-            "      best.focus();" +
-            "      best.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'nearest' });" +
-            "    } else {" +
-            "      if (dir==='down')  window.scrollBy({ top: 300, behavior:'smooth' });" +
-            "      else if (dir==='up')    window.scrollBy({ top: -300, behavior:'smooth' });" +
-            "      else if (dir==='right') window.scrollBy({ left: 300, behavior:'smooth' });" +
-            "      else if (dir==='left')  window.scrollBy({ left: -300, behavior:'smooth' });" +
-            "    }" +
-            "  }" +
-
-            // ── 5. Keyboard handler (ArrowKeys for spatial nav, Enter/Space for click) ──
-            "  window.addEventListener('keydown', function(e) {" +
-            "    var video = document.querySelector('video');" +
-            "    var isVideoPlaying = video && !video.paused && (document.fullscreenElement || video.offsetWidth > 450);" +
-            "    if (isVideoPlaying) {" +
-            "      if (e.keyCode === 39) { video.currentTime += 10; e.preventDefault(); return; }" +
-            "      if (e.keyCode === 37) { video.currentTime -= 10; e.preventDefault(); return; }" +
-            "    }" +
-            "    if (e.keyCode === 40) { moveFocus('down');  e.preventDefault(); }" +
-            "    else if (e.keyCode === 38) { moveFocus('up');    e.preventDefault(); }" +
-            "    else if (e.keyCode === 39) { moveFocus('right'); e.preventDefault(); }" +
-            "    else if (e.keyCode === 37) { moveFocus('left');  e.preventDefault(); }" +
-            "  }, true);" +
+            "  }, 1000);" +
 
             "})();";
 

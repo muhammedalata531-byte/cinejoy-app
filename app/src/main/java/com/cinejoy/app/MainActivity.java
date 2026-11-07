@@ -82,11 +82,11 @@ public class MainActivity extends AppCompatActivity {
 
     // Ad & tracker domains blocked at network layer to save TV RAM & CPU
     private static final String[] BLOCKED_PATTERNS = new String[]{
-        "llvpn.com", "a.wing.st", "doubleclick.net", "google-analytics.com",
+        "doubleclick.net", "google-analytics.com",
         "googlesyndication.com", "popads.net", "adsterra.com", "propellerads.com",
-        "monetag.com", "yandex.ru", "clickadu.com", "histats.com", "exoclick.com",
+        "monetag.com", "clickadu.com", "histats.com", "exoclick.com",
         "trafficfactory.biz", "juicyads.com", "adnxs.com", "adform.net",
-        "/tag.min.js", "popunder", "/ads/", "adservice", "partnerads"
+        "/tag.min.js", "popunder", "adservice", "partnerads"
     };
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -235,6 +235,9 @@ public class MainActivity extends AppCompatActivity {
 
                 // Dismiss splash screen smoothly
                 hideSplashScreen();
+
+                // FIX: Restore badge visibility after page navigation
+                updateBadgePill();
             }
 
             @Override
@@ -358,18 +361,18 @@ public class MainActivity extends AppCompatActivity {
 
     private FrameLayout createNativeCursorView() {
         FrameLayout container = new FrameLayout(this);
-        int sizeDp = 28;
+        int sizeDp = 32;
         int sizePx = (int) (sizeDp * getResources().getDisplayMetrics().density);
         RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(sizePx, sizePx);
         container.setLayoutParams(params);
-        container.setElevation(80f);
+        container.setElevation(100f);
 
         // Outer Neon Ring
         View outerRing = new View(this);
         GradientDrawable ring = new GradientDrawable();
         ring.setShape(GradientDrawable.OVAL);
-        ring.setColor(Color.parseColor("#4495FF50"));
-        ring.setStroke(3, Color.parseColor("#95FF50"));
+        ring.setColor(Color.parseColor("#5595FF50"));
+        ring.setStroke(4, Color.parseColor("#95FF50"));
         outerRing.setBackground(ring);
         FrameLayout.LayoutParams ringParams = new FrameLayout.LayoutParams(sizePx, sizePx);
         outerRing.setLayoutParams(ringParams);
@@ -379,10 +382,11 @@ public class MainActivity extends AppCompatActivity {
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
         dot.setColor(Color.WHITE);
-        int dotSizePx = (int) (6 * getResources().getDisplayMetrics().density);
+        int dotSizePx = (int) (8 * getResources().getDisplayMetrics().density);
         FrameLayout.LayoutParams dotParams = new FrameLayout.LayoutParams(dotSizePx, dotSizePx);
         dotParams.gravity = Gravity.CENTER;
         centerDot.setBackground(dot);
+        centerDot.setLayoutParams(dotParams);
 
         container.addView(outerRing);
         container.addView(centerDot);
@@ -393,45 +397,56 @@ public class MainActivity extends AppCompatActivity {
     private void updateCursorPosition() {
         if (nativeCursorView == null) return;
         int size = nativeCursorView.getWidth();
-        if (size == 0) size = (int) (28 * getResources().getDisplayMetrics().density);
+        if (size == 0) size = (int) (32 * getResources().getDisplayMetrics().density);
         nativeCursorView.setX(cursorX - size / 2f);
         nativeCursorView.setY(cursorY - size / 2f);
 
-        // Auto-scroll WebView when moving cursor near top or bottom edges
+        // FIX: Auto-scroll WebView when moving cursor near top or bottom edges (more aggressive threshold)
         if (webView != null) {
-            if (cursorY < 120) {
-                webView.scrollBy(0, -60);
-            } else if (cursorY > screenHeight - 120) {
-                webView.scrollBy(0, 60);
+            if (cursorY < 150) {
+                webView.scrollBy(0, -100);
+            } else if (cursorY > screenHeight - 150) {
+                webView.scrollBy(0, 100);
             }
         }
     }
 
     /**
-     * Dispatches native Android MotionEvents (ACTION_DOWN + ACTION_UP) directly to the WebView surface.
-     * This bypasses all cross-origin iframe security restrictions and triggers true touch/click events
-     * inside ANY video player, server list, episode tab, or modal dialog.
+     * FIX: Dispatches native Android MotionEvents (ACTION_DOWN + ACTION_UP) directly to the WebView surface.
+     * Uses correct timing: downTime for DOWN, downTime + 120ms for UP — this triggers touchstart+touchend
+     * which works inside ANY cross-origin video player iframe, server list, episode tab, or modal dialog.
      */
     private void dispatchNativeClick(float x, float y) {
         if (webView == null) return;
         long downTime = SystemClock.uptimeMillis();
-        long eventTime = SystemClock.uptimeMillis();
+
+        // FIX: Proper MotionEvent with pointer properties for modern Android touch handling
+        MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[1];
+        props[0] = new MotionEvent.PointerProperties();
+        props[0].id = 0;
+        props[0].toolType = MotionEvent.TOOL_TYPE_FINGER;
+
+        MotionEvent.PointerCoords[] coords = new MotionEvent.PointerCoords[1];
+        coords[0] = new MotionEvent.PointerCoords();
+        coords[0].x = x;
+        coords[0].y = y;
+        coords[0].pressure = 1.0f;
+        coords[0].size = 1.0f;
 
         MotionEvent downEvent = MotionEvent.obtain(
-            downTime,
-            eventTime,
+            downTime, downTime,
             MotionEvent.ACTION_DOWN,
-            x,
-            y,
-            0
+            1, props, coords,
+            0, 0, 1f, 1f, 0, 0,
+            0, 0
         );
+
         MotionEvent upEvent = MotionEvent.obtain(
-            downTime,
-            eventTime + 50,
+            downTime, downTime + 120,
             MotionEvent.ACTION_UP,
-            x,
-            y,
-            0
+            1, props, coords,
+            0, 0, 1f, 1f, 0, 0,
+            0, 0
         );
 
         webView.dispatchTouchEvent(downEvent);
@@ -442,14 +457,14 @@ public class MainActivity extends AppCompatActivity {
         // Visual click feedback: quick pulse animation on cursor
         if (nativeCursorView != null) {
             nativeCursorView.animate()
-                .scaleX(0.6f)
-                .scaleY(0.6f)
-                .setDuration(70)
+                .scaleX(0.55f)
+                .scaleY(0.55f)
+                .setDuration(80)
                 .withEndAction(new Runnable() {
                     @Override
                     public void run() {
                         if (nativeCursorView != null) {
-                            nativeCursorView.animate().scaleX(1.0f).scaleY(1.0f).setDuration(70).start();
+                            nativeCursorView.animate().scaleX(1.0f).scaleY(1.0f).setDuration(80).start();
                         }
                     }
                 })
@@ -461,8 +476,13 @@ public class MainActivity extends AppCompatActivity {
         isMouseModeActive = !isMouseModeActive;
         if (nativeCursorView != null) {
             if (isMouseModeActive) {
+                // FIX: Center cursor on screen when first activating mouse mode
+                cursorX = screenWidth / 2f;
+                cursorY = screenHeight / 2f;
                 nativeCursorView.setVisibility(View.VISIBLE);
                 nativeCursorView.setAlpha(1.0f);
+                nativeCursorView.setScaleX(1.0f);
+                nativeCursorView.setScaleY(1.0f);
                 updateCursorPosition();
             } else {
                 nativeCursorView.setVisibility(View.GONE);
@@ -474,24 +494,28 @@ public class MainActivity extends AppCompatActivity {
         Toast.makeText(
             this,
             isMouseModeActive
-                ? "🎯 نمط الماوس مفعّل (حرّك بالأسهم واضغط OK للضغط) — اضغط مطولاً على OK للإلغاء"
-                : "📱 نمط التنقل بالأسهم مفعّل — اضغط مطولاً على OK لتفعيل الماوس",
+                ? "🎯 نمط الماوس مفعّل — حرّك بالأسهم واضغط OK للنقر\nاضغط مطولاً OK أو زر BACK للخروج"
+                : "📱 نمط التنقل بالأسهم — اضغط مطولاً OK لتفعيل الماوس",
             Toast.LENGTH_LONG
         ).show();
     }
 
     private void updateBadgePill() {
         if (drBadge == null) return;
+        // FIX: Cancel any pending fade animation before updating
         drBadge.animate().cancel();
+        drBadge.setAlpha(1.0f);
+        drBadge.setVisibility(View.VISIBLE);
+
         if (isMouseModeActive) {
-            drBadge.setText("🎯 نمط الماوس (OK مطولاً للتبديل)");
+            drBadge.setText("🎯 ماوس — OK للنقر | BACK للخروج");
             drBadge.setTextColor(Color.parseColor("#050505"));
             GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.parseColor("#95FF50"));
             bg.setCornerRadius(30);
             drBadge.setBackground(bg);
+            // FIX: Keep badge fully visible in mouse mode — do NOT fade
             drBadge.setAlpha(1.0f);
-            drBadge.setVisibility(View.VISIBLE);
         } else {
             drBadge.setText("📱 نمط الريموت | ☰ القائمة");
             drBadge.setTextColor(Color.parseColor("#95FF50"));
@@ -500,9 +524,8 @@ public class MainActivity extends AppCompatActivity {
             bg.setCornerRadius(30);
             bg.setStroke(2, Color.parseColor("#95FF50"));
             drBadge.setBackground(bg);
-            drBadge.setVisibility(View.VISIBLE);
-            // Settle to a discreet 45% opacity so it does not distract during movie playback
-            drBadge.animate().alpha(0.45f).setDuration(500).setStartDelay(3500).start();
+            // FIX: Fade to 60% (not 45%) after delay so it stays readable but non-distracting
+            drBadge.animate().alpha(0.60f).setDuration(600).setStartDelay(4000).start();
         }
     }
 
@@ -512,9 +535,14 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        // 1. Long-press detection on DPAD_CENTER / ENTER to toggle Virtual Mouse
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+
+        // ── 1. DPAD_CENTER / ENTER: Long-press → toggle mouse mode ──
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+
             if (event.getRepeatCount() == 0) {
+                // First press: arm the long-press timer
                 isDpadCenterLongPressing = false;
                 dpadLongPressRunnable = new Runnable() {
                     @Override
@@ -523,37 +551,58 @@ public class MainActivity extends AppCompatActivity {
                         toggleNativeMouseMode();
                     }
                 };
-                dpadHandler.postDelayed(dpadLongPressRunnable, 650); // 650ms long press threshold
+                dpadHandler.postDelayed(dpadLongPressRunnable, 650);
             }
+            // Consume all repeats to avoid spurious clicks while holding
             return true;
         }
 
-        // 2. If Virtual Mouse Mode is active, handle directional arrows with acceleration
+        // ── 2. Mouse mode: D-Pad arrows move cursor with acceleration ──
         if (isMouseModeActive) {
             int repeat = event.getRepeatCount();
-            float step = Math.min(65f, 22f + repeat * 6f);
+            // Acceleration: starts at 18px/step, reaches 70px/step after ~12 repeats
+            float step = Math.min(70f, 18f + repeat * 4.5f);
 
             switch (keyCode) {
                 case KeyEvent.KEYCODE_DPAD_UP:
-                    cursorY = Math.max(10f, cursorY - step);
+                    cursorY = Math.max(8f, cursorY - step);
                     updateCursorPosition();
                     return true;
                 case KeyEvent.KEYCODE_DPAD_DOWN:
-                    cursorY = Math.min((float) screenHeight - 10f, cursorY + step);
+                    cursorY = Math.min((float) screenHeight - 8f, cursorY + step);
                     updateCursorPosition();
                     return true;
                 case KeyEvent.KEYCODE_DPAD_LEFT:
-                    cursorX = Math.max(10f, cursorX - step);
+                    cursorX = Math.max(8f, cursorX - step);
                     updateCursorPosition();
                     return true;
                 case KeyEvent.KEYCODE_DPAD_RIGHT:
-                    cursorX = Math.min((float) screenWidth - 10f, cursorX + step);
+                    cursorX = Math.min((float) screenWidth - 8f, cursorX + step);
                     updateCursorPosition();
                     return true;
+
+                // FIX: In mouse mode, BACK key exits mouse mode (not the app)
+                case KeyEvent.KEYCODE_BACK:
+                    toggleNativeMouseMode();
+                    return true;
             }
+            // In mouse mode, consume all other keys to prevent focus-change conflicts
+            return true;
         }
 
-        // 3. Android TV Remote Media & Menu Controller Handling
+        // ── 3. D-Pad mode: Arrow keys handled by JS spatial navigation engine ──
+        // FIX: We inject keydown events into the WebView so the JS engine handles them.
+        // We do NOT intercept them here — let WebView receive them so our injected JS works.
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_DPAD_UP:
+            case KeyEvent.KEYCODE_DPAD_DOWN:
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                // Let WebView handle — our injected JS spatial navigation will catch ArrowKey events
+                return super.onKeyDown(keyCode, event);
+        }
+
+        // ── 4. Media & Menu keys ──
         switch (keyCode) {
             case KeyEvent.KEYCODE_MENU:
             case KeyEvent.KEYCODE_INFO:
@@ -604,12 +653,6 @@ public class MainActivity extends AppCompatActivity {
                     return true;
                 }
 
-                // If Mouse Mode is active, turning back reverts to D-Pad mode first
-                if (isMouseModeActive) {
-                    toggleNativeMouseMode();
-                    return true;
-                }
-
                 // Web navigation back
                 if (webView != null && webView.canGoBack()) {
                     webView.goBack();
@@ -626,26 +669,28 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+                || keyCode == KeyEvent.KEYCODE_ENTER
+                || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+
             // Cancel the long-press timer
             if (dpadLongPressRunnable != null) {
                 dpadHandler.removeCallbacks(dpadLongPressRunnable);
                 dpadLongPressRunnable = null;
             }
 
-            // If a long press just triggered, consume and do not click
+            // If a long press just triggered the toggle, consume and do not click
             if (isDpadCenterLongPressing) {
                 isDpadCenterLongPressing = false;
                 return true;
             }
 
-            // Short press:
+            // Short press action:
             if (isMouseModeActive) {
-                // Dispatch native hardware touch event at cursor location
+                // FIX: Dispatch native hardware touch event at cursor location
                 dispatchNativeClick(cursorX, cursorY);
-                return true;
             } else {
-                // In D-Pad mode: trigger Click on currently focused element or play/pause video
+                // D-Pad mode: trigger click on focused element, or play/pause if video is playing
                 if (webView != null) {
                     webView.evaluateJavascript(
                         "(function() {" +
@@ -654,22 +699,32 @@ public class MainActivity extends AppCompatActivity {
                         "    if (v.paused) v.play(); else v.pause(); return;" +
                         "  }" +
                         "  var el = document.activeElement;" +
-                        "  if (el && typeof el.click === 'function') {" +
+                        "  if (el && el !== document.body) {" +
                         "    var r = el.getBoundingClientRect();" +
                         "    var cx = r.left + r.width / 2;" +
                         "    var cy = r.top + r.height / 2;" +
+                        // Dispatch synthetic touch events for touch-only handlers
+                        "    var te_start = new TouchEvent('touchstart', { bubbles: true, cancelable: true," +
+                        "      touches: [new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy, radiusX: 10, radiusY: 10, rotationAngle: 0, force: 1 })]" +
+                        "    });" +
+                        "    var te_end = new TouchEvent('touchend', { bubbles: true, cancelable: true," +
+                        "      changedTouches: [new Touch({ identifier: 1, target: el, clientX: cx, clientY: cy, radiusX: 10, radiusY: 10, rotationAngle: 0, force: 0 })]" +
+                        "    });" +
+                        "    el.dispatchEvent(te_start);" +
+                        "    el.dispatchEvent(te_end);" +
+                        // Also dispatch mouse events for compatibility
                         "    var md = new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
                         "    var mu = new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
                         "    var mc = new MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window });" +
                         "    el.dispatchEvent(md); el.dispatchEvent(mu); el.dispatchEvent(mc);" +
-                        "    el.click();" +
+                        "    if (typeof el.click === 'function') el.click();" +
                         "  }" +
                         "})();",
                         null
                     );
                 }
-                return true;
             }
+            return true;
         }
         return super.onKeyUp(keyCode, event);
     }
@@ -769,18 +824,25 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Discreet initial fade after 4 seconds
-        badge.animate().alpha(0.45f).setDuration(500).setStartDelay(4000).start();
+        // FIX: Fade to 60% (not hidden) after 4 seconds — still readable, non-distracting
+        badge.animate().alpha(0.60f).setDuration(600).setStartDelay(4000).start();
 
         return badge;
     }
 
     private void showDrMuhammedMenu() {
+        // FIX: Restore badge to full visibility when menu is opened
+        if (drBadge != null) {
+            drBadge.animate().cancel();
+            drBadge.setAlpha(1.0f);
+            drBadge.setVisibility(View.VISIBLE);
+        }
+
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("🎬 CineJoy TV Hub — By Dr. Muhammed");
 
         String[] options = {
-            "🎯 مؤشر الماوس الافتراضي (Virtual Mouse): " + (isMouseModeActive ? "مفعّل 🟢 (اضغط مطولاً على OK)" : "معطّل ⚪ (اضغط مطولاً على OK)"),
+            "🎯 مؤشر الماوس الافتراضي (Virtual Mouse): " + (isMouseModeActive ? "مفعّل 🟢 (OK مطولاً للتبديل)" : "معطّل ⚪ (OK مطولاً للتفعيل)"),
             "🛡️ حظر الإعلانات والبوب أب: " + (isAdBlockActive ? "مفعّل ✅" : "معطّل ❌"),
             "⚡ تسريع أداء الشاشة (TV Hardware Booster): " + (isTvBoostActive ? "مفعّل ✅" : "معطّل ❌"),
             "⚡ سرعة التشغيل: " + currentPlaybackSpeed + "x",
@@ -837,6 +899,8 @@ public class MainActivity extends AppCompatActivity {
                         break;
                 }
                 hideSystemUI();
+                // FIX: Schedule badge fade after menu closes
+                updateBadgePill();
             }
         });
 
@@ -845,6 +909,7 @@ public class MainActivity extends AppCompatActivity {
             public void onClick(DialogInterface d, int w) {
                 hideSystemUI();
                 if (webView != null) webView.requestFocus();
+                updateBadgePill();
             }
         });
         AlertDialog dialog = builder.create();
@@ -878,12 +943,13 @@ public class MainActivity extends AppCompatActivity {
 
     private void showAboutDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("حول تطبيق CineJoy TV")
+            .setTitle("حول تطبيق CineJoy TV v1.2")
             .setMessage("✨ CineJoy Pro Edition — Smart TV & Android\n" +
                         "👨‍💻 تم التطوير والتخصيص بواسطة: Dr. Muhammed\n\n" +
-                        "الميزات المدمجة والتحسينات الجديدة:\n" +
+                        "الميزات المدمجة والتحسينات الجديدة (v1.2):\n" +
                         "• مؤشر ماوس افتراضي أصلي (Native MotionEvent Pointer) يعمل على كافة الأزرار داخل المشغلات والإطارات (iframes)\n" +
-                        "• تفعيل/تعطيل نمط الماوس بضغطة مطولة على زر OK (0.7 ثانية)\n" +
+                        "• الماوس يبدأ من مركز الشاشة عند كل تفعيل\n" +
+                        "• تفعيل/تعطيل نمط الماوس بضغطة مطولة على زر OK (0.65 ثانية) أو بزر BACK\n" +
                         "• محرك تنقل متقدم بالريموت كنترول (D-Pad Spatial Navigation) مع فحص شامل لأزرار الحلقات والسيرفرات\n" +
                         "• تمييز بصري نيون ساطع للعنصر المحدد على الشاشة الكبيرة\n" +
                         "• حظر فوري للإعلانات والصفحات المنبثقة على مستوى الشبكة\n" +
@@ -892,15 +958,27 @@ public class MainActivity extends AppCompatActivity {
             .show();
     }
 
-    // Injects Deep Spatial Navigation Engine, High-Contrast TV Focus & Performance Boost
+    // ==========================================
+    // TV NAVIGATION JS ENGINE — SPATIAL FOCUS + PERFORMANCE BOOST
+    // ==========================================
+
+    /**
+     * FIX: Completely rewritten JS navigation engine:
+     * - Wider element selectors covering all cinejoy.pk button types
+     * - Proper keydown handler that does NOT conflict with native WebView key events
+     * - MutationObserver to re-scan buttons added dynamically (episode lists, server tabs, quality selectors)
+     * - Touch event simulation in JS for touch-only clickable elements
+     * - Spatial navigation uses weighted distance (penalizes perpendicular drift)
+     */
     private void injectTvNavigationAndEnhancements() {
         if (webView == null) return;
 
         String tvEngineJs = "(function() {" +
-            "  if (window.__cinejoyTvInjected) return;" +
-            "  window.__cinejoyTvInjected = true;" +
-            "" +
-            "  /* 1. TV Focus & GPU Performance CSS */" +
+            // Guard: only inject once per page load
+            "  if (window.__cinejoyTvV2) return;" +
+            "  window.__cinejoyTvV2 = true;" +
+
+            // ── 1. TV Focus & GPU Performance CSS ──
             "  var style = document.createElement('style');" +
             "  style.id = 'cinejoy-tv-styles';" +
             "  style.textContent = `" +
@@ -908,9 +986,9 @@ public class MainActivity extends AppCompatActivity {
             "      outline: 4px solid #95FF50 !important;" +
             "      outline-offset: 3px !important;" +
             "      border-radius: 8px !important;" +
-            "      box-shadow: 0 0 24px rgba(149, 255, 80, 0.95) !important;" +
-            "      transform: scale(1.05) !important;" +
-            "      transition: transform 0.12s ease-out, outline 0.12s ease-out !important;" +
+            "      box-shadow: 0 0 24px rgba(149,255,80,0.9), 0 0 8px rgba(149,255,80,0.5) !important;" +
+            "      transform: scale(1.06) !important;" +
+            "      transition: transform 0.1s, box-shadow 0.1s !important;" +
             "      z-index: 999999 !important;" +
             "    }" +
             "    * {" +
@@ -920,99 +998,113 @@ public class MainActivity extends AppCompatActivity {
             "    }" +
             "  `;" +
             "  (document.head || document.documentElement).appendChild(style);" +
-            "" +
-            "  /* 2. Block Popups & Ads */" +
+
+            // ── 2. Block Popups & Ads ──
             "  window.open = function() { return null; };" +
-            "  try { localStorage.setItem('addies', 'false'); } catch(e){}" +
-            "" +
-            "  /* 3. Deep Scanner for All Interactive Web Elements */" +
+            "  try { localStorage.setItem('addies','false'); } catch(e){}" +
+
+            // ── 3. Deep Scanner for ALL Interactive Web Elements ──
+            "  var SELECTORS = [" +
+            "    'a[href]','button','input','select','textarea','[tabindex]'," +
+            "    '[role=\"button\"]','[role=\"link\"]','[role=\"tab\"]','[role=\"menuitem\"]','[onclick]'," +
+            "    '[data-url]','[data-server]','[data-episode]','[data-season]','[data-src]'," +
+            "    'div[class*=\"card\"]','div[class*=\"item\"]','div[class*=\"poster\"]'," +
+            "    'div[class*=\"movie\"]','div[class*=\"episode\"]','div[class*=\"season\"]'," +
+            "    'div[class*=\"server\"]','div[class*=\"play\"]','div[class*=\"btn\"]'," +
+            "    'div[class*=\"link\"]','div[class*=\"tab\"]','div[class*=\"opt\"]'," +
+            "    'span[class*=\"btn\"]','span[class*=\"server\"]','span[class*=\"ep\"]'," +
+            "    'li[class*=\"item\"]','li[class*=\"ep\"]','li[class*=\"server\"]'" +
+            "  ].join(',');" +
+
             "  function makeFocusable() {" +
-            "    var selectors = [" +
-            "      'a[href]', 'button', 'input', 'select', 'textarea', '[tabindex]'," +
-            "      '[role=\"button\"]', '[role=\"link\"]', '[role=\"tab\"]', '[onclick]'," +
-            "      '[data-url]', '[data-server]', '[data-episode]', '[data-season]'," +
-            "      'div[class*=\"card\"]', 'div[class*=\"item\"]', 'div[class*=\"poster\"]'," +
-            "      'div[class*=\"movie\"]', 'div[class*=\"episode\"]', 'div[class*=\"season\"]'," +
-            "      'div[class*=\"server\"]', 'div[class*=\"play\"]', 'div[class*=\"btn\"]'," +
-            "      'span[class*=\"btn\"]', 'span[class*=\"server\"]', 'li[class*=\"item\"]'" +
-            "    ];" +
-            "    var elements = document.querySelectorAll(selectors.join(', '));" +
+            "    var elements = document.querySelectorAll(SELECTORS);" +
             "    for (var i = 0; i < elements.length; i++) {" +
             "      var el = elements[i];" +
-            "      if (!el.hasAttribute('tabindex') && el.offsetParent !== null) {" +
-            "        el.setAttribute('tabindex', '0');" +
+            "      if (el.getAttribute('tabindex') === null && el.offsetParent !== null) {" +
+            "        el.setAttribute('tabindex','0');" +
             "      }" +
             "    }" +
             "  }" +
             "  makeFocusable();" +
-            "  setInterval(makeFocusable, 1800);" +
-            "" +
-            "  /* 4. Spatial Navigation Movement */" +
-            "  function getFocusable() {" +
-            "    var all = document.querySelectorAll('[tabindex=\"0\"], a, button, input');" +
+
+            // FIX: MutationObserver to catch dynamically added elements (episode tabs, quality dropdown etc.)
+            "  var obs = new MutationObserver(function(muts) {" +
+            "    for (var m = 0; m < muts.length; m++) {" +
+            "      if (muts[m].addedNodes.length > 0) { makeFocusable(); break; }" +
+            "    }" +
+            "  });" +
+            "  obs.observe(document.body, { childList: true, subtree: true });" +
+
+            // Also refresh periodically as fallback for lazy-loaded content
+            "  setInterval(makeFocusable, 2000);" +
+
+            // ── 4. Spatial Focus Navigation ──
+            "  function getVisible() {" +
+            "    var all = document.querySelectorAll('[tabindex=\"0\"],a,button,input,select');" +
             "    var vis = [];" +
             "    for (var i = 0; i < all.length; i++) {" +
             "      var r = all[i].getBoundingClientRect();" +
-            "      if (r.width > 0 && r.height > 0 && all[i].offsetParent !== null) vis.push(all[i]);" +
+            "      if (r.width > 4 && r.height > 4 && all[i].offsetParent !== null) vis.push(all[i]);" +
             "    }" +
             "    return vis;" +
             "  }" +
-            "" +
+
             "  function moveFocus(dir) {" +
             "    var active = document.activeElement;" +
-            "    var elements = getFocusable();" +
+            "    var elements = getVisible();" +
             "    if (!elements.length) return;" +
             "    if (!active || active === document.body || !active.getBoundingClientRect) {" +
             "      elements[0].focus();" +
-            "      elements[0].scrollIntoView({ behavior: 'smooth', block: 'center' });" +
+            "      elements[0].scrollIntoView({ behavior:'smooth', block:'center' });" +
             "      return;" +
             "    }" +
             "    var cur = active.getBoundingClientRect();" +
             "    var cx = cur.left + cur.width / 2;" +
             "    var cy = cur.top + cur.height / 2;" +
-            "    var best = null;" +
-            "    var minD = Infinity;" +
+            "    var best = null, minD = Infinity;" +
             "    for (var i = 0; i < elements.length; i++) {" +
             "      var el = elements[i];" +
             "      if (el === active) continue;" +
             "      var r = el.getBoundingClientRect();" +
             "      var ex = r.left + r.width / 2;" +
             "      var ey = r.top + r.height / 2;" +
-            "      var dx = ex - cx;" +
-            "      var dy = ey - cy;" +
-            "      var valid = (dir === 'down' && dy > 12) || (dir === 'up' && dy < -12) || (dir === 'right' && dx > 12) || (dir === 'left' && dx < -12);" +
+            "      var dx = ex - cx, dy = ey - cy;" +
+            // FIX: Stricter directional validity (at least 10px in direction, ratio check)
+            "      var valid = false;" +
+            "      if (dir==='down')  valid = dy > 10 && dy > Math.abs(dx) * 0.4;" +
+            "      if (dir==='up')    valid = dy < -10 && -dy > Math.abs(dx) * 0.4;" +
+            "      if (dir==='right') valid = dx > 10 && dx > Math.abs(dy) * 0.4;" +
+            "      if (dir==='left')  valid = dx < -10 && -dx > Math.abs(dy) * 0.4;" +
             "      if (valid) {" +
-            "        var d = (dir === 'up' || dir === 'down') ? Math.abs(dy) + Math.abs(dx) * 2.5 : Math.abs(dx) + Math.abs(dy) * 2.5;" +
+            "        var d = (dir==='up'||dir==='down') ? Math.abs(dy) + Math.abs(dx) * 2 : Math.abs(dx) + Math.abs(dy) * 2;" +
             "        if (d < minD) { minD = d; best = el; }" +
             "      }" +
             "    }" +
             "    if (best) {" +
             "      best.focus();" +
-            "      best.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });" +
+            "      best.scrollIntoView({ behavior:'smooth', block:'nearest', inline:'nearest' });" +
             "    } else {" +
-            "      if (dir === 'down') window.scrollBy({ top: 320, behavior: 'smooth' });" +
-            "      else if (dir === 'up') window.scrollBy({ top: -320, behavior: 'smooth' });" +
-            "      else if (dir === 'right') window.scrollBy({ left: 320, behavior: 'smooth' });" +
-            "      else if (dir === 'left') window.scrollBy({ left: -320, behavior: 'smooth' });" +
+            "      if (dir==='down')  window.scrollBy({ top: 300, behavior:'smooth' });" +
+            "      else if (dir==='up')    window.scrollBy({ top: -300, behavior:'smooth' });" +
+            "      else if (dir==='right') window.scrollBy({ left: 300, behavior:'smooth' });" +
+            "      else if (dir==='left')  window.scrollBy({ left: -300, behavior:'smooth' });" +
             "    }" +
             "  }" +
-            "" +
+
+            // ── 5. Keyboard handler (ArrowKeys for spatial nav, Enter/Space for click) ──
             "  window.addEventListener('keydown', function(e) {" +
             "    var video = document.querySelector('video');" +
-            "    var isVideoActive = video && (document.fullscreenElement || video.offsetWidth > 450);" +
-            "    if (isVideoActive) {" +
-            "      if (e.key === 'ArrowRight' || e.keyCode === 39) {" +
-            "        video.currentTime += 10; e.preventDefault(); return;" +
-            "      } else if (e.key === 'ArrowLeft' || e.keyCode === 37) {" +
-            "        video.currentTime -= 10; e.preventDefault(); return;" +
-            "      }" +
+            "    var isVideoPlaying = video && !video.paused && (document.fullscreenElement || video.offsetWidth > 450);" +
+            "    if (isVideoPlaying) {" +
+            "      if (e.keyCode === 39) { video.currentTime += 10; e.preventDefault(); return; }" +
+            "      if (e.keyCode === 37) { video.currentTime -= 10; e.preventDefault(); return; }" +
             "    }" +
-            "" +
-            "    if (e.key === 'ArrowDown' || e.keyCode === 40) { moveFocus('down'); e.preventDefault(); }" +
-            "    else if (e.key === 'ArrowUp' || e.keyCode === 38) { moveFocus('up'); e.preventDefault(); }" +
-            "    else if (e.key === 'ArrowRight' || e.keyCode === 39) { moveFocus('right'); e.preventDefault(); }" +
-            "    else if (e.key === 'ArrowLeft' || e.keyCode === 37) { moveFocus('left'); e.preventDefault(); }" +
+            "    if (e.keyCode === 40) { moveFocus('down');  e.preventDefault(); }" +
+            "    else if (e.keyCode === 38) { moveFocus('up');    e.preventDefault(); }" +
+            "    else if (e.keyCode === 39) { moveFocus('right'); e.preventDefault(); }" +
+            "    else if (e.keyCode === 37) { moveFocus('left');  e.preventDefault(); }" +
             "  }, true);" +
+
             "})();";
 
         webView.evaluateJavascript(tvEngineJs, null);
@@ -1104,3 +1196,4 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 }
+

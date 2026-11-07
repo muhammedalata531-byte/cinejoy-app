@@ -1,4 +1,4 @@
-package com.cinejoy.app;
+﻿package com.cinejoy.app;
 
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
@@ -118,7 +118,7 @@ public class MainActivity extends AppCompatActivity {
             RelativeLayout.LayoutParams.MATCH_PARENT);
         webView.setLayoutParams(wvParams);
         webView.setBackgroundColor(Color.parseColor("#050505"));
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null); // 60 FPS Hardware Acceleration
+        // Hardware acceleration handled automatically by window
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
@@ -354,7 +354,7 @@ public class MainActivity extends AppCompatActivity {
         int sizePx = (int) (sizeDp * getResources().getDisplayMetrics().density);
         RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(sizePx, sizePx);
         container.setLayoutParams(params);
-        container.setElevation(100f);
+        // Elevation removed to prevent EGL_BAD_ALLOC
 
         // Outer Neon Ring
         View outerRing = new View(this);
@@ -877,7 +877,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void showAboutDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("حول تطبيق CineJoy TV v1.3")
+            .setTitle("حول تطبيق CineJoy TV v1.4")
             .setMessage("✨ CineJoy Pro Edition — Smart TV & Android\n" +
                         "👨‍💻 تم التطوير والتخصيص بواسطة: Dr. Muhammed\n\n" +
                         "• أداء فائق السرعة وخفيف 100% بدون أي تعليق\n" +
@@ -1021,4 +1021,5 @@ public class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 }
+
 

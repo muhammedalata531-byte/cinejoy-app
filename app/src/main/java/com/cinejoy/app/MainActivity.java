@@ -235,7 +235,10 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
-                return true;
+                try {
+                    android.util.Log.i("CineJoyJS", consoleMessage.message());
+                } catch (Exception ignored) {}
+                return false;
             }
         };
         webView.setWebChromeClient(activeChromeClient);
@@ -512,6 +515,7 @@ public class MainActivity extends AppCompatActivity {
             + "try{el.click();}catch(e){}"
             + "return 'click';"
             + "};"
+            + "try{var probe=cands();console.log('CINEJOY_ENGINE_LOADED candidates='+probe.length);}catch(elog){console.log('CINEJOY_ENGINE_PROBE_ERR='+elog);}"
             + "})();";
 
         webView.evaluateJavascript(js, null);
@@ -716,10 +720,52 @@ public class MainActivity extends AppCompatActivity {
 
     // ==========================================
     // KEY EVENT HANDLING FOR ANDROID TV REMOTES
+    // Critical: keys are intercepted in dispatchKeyEvent BEFORE the WebView
+    // consumes them (a focused-in-touch-mode WebView eats DPAD/OK keys
+    // internally, so onKeyDown is never called). This is why navigation
+    // failed on real TVs.
     // ==========================================
 
     @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        int keyCode = event.getKeyCode();
+        int action = event.getAction();
+
+        boolean isIntercepted = keyCode == KeyEvent.KEYCODE_DPAD_UP
+            || keyCode == KeyEvent.KEYCODE_DPAD_DOWN
+            || keyCode == KeyEvent.KEYCODE_DPAD_LEFT
+            || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT
+            || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
+            || keyCode == KeyEvent.KEYCODE_ENTER
+            || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER
+            || keyCode == KeyEvent.KEYCODE_BACK
+            || keyCode == KeyEvent.KEYCODE_MENU
+            || keyCode == KeyEvent.KEYCODE_SETTINGS
+            || keyCode == KeyEvent.KEYCODE_PROG_YELLOW
+            || keyCode == KeyEvent.KEYCODE_PROG_BLUE
+            || keyCode == KeyEvent.KEYCODE_PROG_RED
+            || keyCode == KeyEvent.KEYCODE_INFO
+            || keyCode == KeyEvent.KEYCODE_BUTTON_Y
+            || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE
+            || keyCode == KeyEvent.KEYCODE_MEDIA_PLAY
+            || keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE
+            || keyCode == KeyEvent.KEYCODE_MEDIA_FAST_FORWARD
+            || keyCode == KeyEvent.KEYCODE_MEDIA_REWIND;
+
+        if (isIntercepted) {
+            if (action == KeyEvent.ACTION_DOWN) {
+                handleKeyDown(keyCode, event);
+                return true;
+            } else if (action == KeyEvent.ACTION_UP) {
+                handleKeyUp(keyCode, event);
+                return true;
+            }
+        }
+
+        return super.dispatchKeyEvent(event);
+    }
+
+    private void handleKeyDown(int keyCode, KeyEvent event) {
 
         // 1. OK / ENTER: long-press toggles Mouse Mode
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
@@ -737,14 +783,14 @@ public class MainActivity extends AppCompatActivity {
                 };
                 mainHandler.postDelayed(okLongPressRunnable, OK_LONG_PRESS_MS);
             }
-            return true;
+            return;
         }
 
         // 2. Direct shortcuts (yellow / blue / info / gamepad-Y) toggle Mouse Mode
         if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW || keyCode == KeyEvent.KEYCODE_PROG_BLUE
             || keyCode == KeyEvent.KEYCODE_INFO || keyCode == KeyEvent.KEYCODE_BUTTON_Y) {
             toggleNativeMouseMode();
-            return true;
+            return;
         }
 
         // 3. Mouse mode: arrows move the cursor with real acceleration
@@ -756,29 +802,29 @@ public class MainActivity extends AppCompatActivity {
                 case KeyEvent.KEYCODE_DPAD_UP:
                     cursorY = Math.max(8f, cursorY - step);
                     updateCursorPosition();
-                    return true;
+                    return;
                 case KeyEvent.KEYCODE_DPAD_DOWN:
                     cursorY = Math.min((float) screenHeight - 8f, cursorY + step);
                     updateCursorPosition();
-                    return true;
+                    return;
                 case KeyEvent.KEYCODE_DPAD_LEFT:
                     cursorX = Math.max(8f, cursorX - step);
                     updateCursorPosition();
-                    return true;
+                    return;
                 case KeyEvent.KEYCODE_DPAD_RIGHT:
                     cursorX = Math.min((float) screenWidth - 8f, cursorX + step);
                     updateCursorPosition();
-                    return true;
+                    return;
                 case KeyEvent.KEYCODE_BACK:
                     toggleNativeMouseMode();
-                    return true;
+                    return;
                 case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
                     dispatchNativeClick(cursorX, cursorY);
-                    return true;
+                    return;
             }
-            return true;
+            return;
         }
 
         // 4. Normal mode: arrows go through our JS spatial navigation engine
@@ -796,10 +842,17 @@ public class MainActivity extends AppCompatActivity {
                         default: dir = "right"; break;
                     }
                     webView.evaluateJavascript(
-                        "window.__cinejoyMove&&window.__cinejoyMove('" + dir + "')", null);
-                    return true;
+                        "window.__cinejoyMove&&window.__cinejoyMove('" + dir + "')",
+                        new ValueCallback<String>() {
+                            @Override
+                            public void onReceiveValue(String value) {
+                                try {
+                                    android.util.Log.i("CineJoyJS", "move(" + dir + ") -> " + value);
+                                } catch (Exception ignored) {}
+                            }
+                        });
                 }
-                return super.onKeyDown(keyCode, event);
+                return;
         }
 
         // 5. Menu & media keys
@@ -808,40 +861,37 @@ public class MainActivity extends AppCompatActivity {
             case KeyEvent.KEYCODE_SETTINGS:
             case KeyEvent.KEYCODE_PROG_RED:
                 showDrMuhammedMenu();
-                return true;
+                return;
 
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_MEDIA_PLAY:
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
                 sendVideoCommand("if(v.paused){v.play();}else{v.pause();}");
-                return true;
+                return;
 
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
                 sendVideoCommand("v.currentTime+=10;");
-                return true;
+                return;
 
             case KeyEvent.KEYCODE_MEDIA_REWIND:
                 sendVideoCommand("v.currentTime-=10;");
-                return true;
+                return;
 
             case KeyEvent.KEYCODE_BACK:
                 if (customView != null) {
                     exitFullscreen();
-                    return true;
+                    return;
                 }
                 if (webView != null && webView.canGoBack()) {
                     webView.goBack();
-                    return true;
+                    return;
                 }
                 showExitConfirmDialog();
-                return true;
+                return;
         }
-
-        return super.onKeyDown(keyCode, event);
     }
 
-    @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
+    private void handleKeyUp(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
             || keyCode == KeyEvent.KEYCODE_ENTER
             || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
@@ -853,7 +903,7 @@ public class MainActivity extends AppCompatActivity {
 
             if (isOkLongPressFired) {
                 isOkLongPressFired = false;
-                return true;
+                return;
             }
 
             if (isMouseModeActive) {
@@ -861,12 +911,18 @@ public class MainActivity extends AppCompatActivity {
             } else {
                 if (webView != null) {
                     webView.evaluateJavascript(
-                        "window.__cinejoyClick&&window.__cinejoyClick()", null);
+                        "window.__cinejoyClick&&window.__cinejoyClick()",
+                        new ValueCallback<String>() {
+                            @Override
+                            public void onReceiveValue(String value) {
+                                try {
+                                    android.util.Log.i("CineJoyJS", "click -> " + value);
+                                } catch (Exception ignored) {}
+                            }
+                        });
                 }
             }
-            return true;
         }
-        return super.onKeyUp(keyCode, event);
     }
 
     // ==========================================

@@ -581,6 +581,13 @@ public class MainActivity extends AppCompatActivity {
             + "}catch(e4){}}"
             + "neutralizeOverlays();"
             + "window.__cinejoyOverlayTimer=setInterval(neutralizeOverlays,1500);"
+            + "try{"
+            + "var __mo=new MutationObserver(function(muts){"
+            + "clearTimeout(window.__cinejoyScanT);"
+            + "window.__cinejoyScanT=setTimeout(neutralizeOverlays,60);"
+            + "});"
+            + "__mo.observe(document.documentElement,{childList:true,subtree:true});"
+            + "}catch(moe){console.log('CINEJOY_MO_ERR='+moe);}"
             + "}catch(eo){console.log('CINEJOY_OVERLAY_INIT_ERR='+eo);}"
             + "})();";
 

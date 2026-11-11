@@ -1,12 +1,9 @@
 package com.cinejoy.app;
 
-import android.animation.Animator;
-import android.animation.AnimatorListenerAdapter;
 import android.annotation.SuppressLint;
 import android.app.AlertDialog;
 import android.content.DialogInterface;
 import android.content.Intent;
-import android.content.pm.ActivityInfo;
 import android.content.res.ColorStateList;
 import android.graphics.Bitmap;
 import android.graphics.Color;
@@ -20,6 +17,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
+import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
@@ -28,6 +26,7 @@ import android.view.WindowManager;
 import android.webkit.ConsoleMessage;
 import android.webkit.CookieManager;
 import android.webkit.DownloadListener;
+import android.webkit.RenderProcessGoneDetail;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -51,7 +50,12 @@ import java.io.ByteArrayInputStream;
 
 public class MainActivity extends AppCompatActivity {
 
+    private static final String TARGET_URL = "https://cinejoy.pk/";
+    private static final int FILE_CHOOSER_REQUEST_CODE = 100;
+    private static final long OK_LONG_PRESS_MS = 500;
+
     private WebView webView;
+    private WebChromeClient activeChromeClient;
     private ProgressBar progressBar;
     private FrameLayout customViewContainer;
     private View customView;
@@ -59,33 +63,43 @@ public class MainActivity extends AppCompatActivity {
     private RelativeLayout splashLayout;
     private TextView drBadge;
 
-    private static final String TARGET_URL = "https://cinejoy.pk/";
     private ValueCallback<Uri[]> filePathCallback;
-    private static final int FILE_CHOOSER_REQUEST_CODE = 100;
+    private boolean mainFrameError = false;
+    private int rendererCrashCount = 0;
+    private long lastRendererCrashAt = 0L;
 
     private boolean isAdBlockActive = true;
     private boolean isMouseModeActive = false;
     private float currentPlaybackSpeed = 1.0f;
 
-    // Native Virtual Mouse Engine variables
+    // Native virtual mouse
     private FrameLayout nativeCursorView;
     private float cursorX = 960f;
     private float cursorY = 540f;
     private int screenWidth = 1920;
     private int screenHeight = 1080;
 
-    // D-Pad long press tracking for DPAD_CENTER / ENTER
-    private boolean isDpadCenterLongPressing = false;
-    private final Handler dpadHandler = new Handler(Looper.getMainLooper());
-    private Runnable dpadLongPressRunnable;
+    // OK long-press tracking
+    private boolean isOkLongPressFired = false;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Runnable okLongPressRunnable;
 
-    // Blocked ad domains to save CPU and network bandwidth
     private static final String[] BLOCKED_PATTERNS = new String[]{
-        "doubleclick.net", "google-analytics.com",
-        "googlesyndication.com", "popads.net", "adsterra.com", "propellerads.com",
-        "monetag.com", "clickadu.com", "histats.com", "exoclick.com",
-        "trafficfactory.biz", "juicyads.com", "adnxs.com", "adform.net",
-        "/tag.min.js", "popunder", "adservice"
+        "doubleclick.net", "google-analytics.com", "googlesyndication.com",
+        "googletagservices.com", "partner.googleadservices.com", "adservice.google",
+        "pagead2.googlesyndication", "popads.net", "popcash.net", "adsterra.com",
+        "propellerads.com", "propellerclick.com", "monetag.com", "mtag.pw",
+        "clickadu.com", "hilltopads.net", "hilltopads.com", "ad-maven.com",
+        "ad-maven.net", "adcash.com", "onclickads.net", "onclckds.com",
+        "exoclick.com", "trafficfactory.biz", "juicyads.com", "trafficstars.com",
+        "tsyndicate.com", "adnxs.com", "adform.net", "criteo.com", "criteo.net",
+        "taboola.com", "outbrain.com", "histats.com", "mc.yandex.ru",
+        "cloudflareinsights.com", "quantserve.com", "scorecardresearch.com",
+        "zedo.com", "smartadserver.com", "pubmatic.com", "rubiconproject.com",
+        "openx.net", "indexww.com", "bidswitch.net", "casalemedia.com",
+        "sharethrough.com", "spotxchange.com", "teads.tv", "media.net",
+        "revcontent.com", "mgid.com", "adskeeper.co.uk", "popunder", "/ads/",
+        "/adbanner", "/banner.js", "popunder", "adblock-detect", "admaven"
     };
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -93,25 +107,23 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Keep screen on during playback
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-
-        // Immersive sticky fullscreen mode
         hideSystemUI();
 
-        // Get actual screen resolution
         DisplayMetrics dm = new DisplayMetrics();
-        getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+        try {
+            getWindowManager().getDefaultDisplay().getRealMetrics(dm);
+        } catch (Exception ignored) {
+            getWindowManager().getDefaultDisplay().getMetrics(dm);
+        }
         screenWidth = Math.max(800, dm.widthPixels);
         screenHeight = Math.max(600, dm.heightPixels);
         cursorX = screenWidth / 2f;
         cursorY = screenHeight / 2f;
 
-        // Main Root layout
         RelativeLayout rootLayout = new RelativeLayout(this);
         rootLayout.setBackgroundColor(Color.parseColor("#050505"));
 
-        // Optimized WebView for Android TV (Standard hardware acceleration via Window)
         webView = new WebView(this);
         RelativeLayout.LayoutParams wvParams = new RelativeLayout.LayoutParams(
             RelativeLayout.LayoutParams.MATCH_PARENT,
@@ -121,8 +133,9 @@ public class MainActivity extends AppCompatActivity {
         webView.setFocusable(true);
         webView.setFocusableInTouchMode(true);
         webView.requestFocus();
+        // Critical for Mali GPU TVs: never add extra rendering layers
+        webView.setLayerType(View.LAYER_TYPE_NONE, null);
 
-        // Progress bar (Neon Lime)
         progressBar = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progressBar.setMax(100);
         progressBar.setProgressTintList(ColorStateList.valueOf(Color.parseColor("#95FF50")));
@@ -132,7 +145,6 @@ public class MainActivity extends AppCompatActivity {
         pbParams.addRule(RelativeLayout.ALIGN_PARENT_TOP);
         progressBar.setLayoutParams(pbParams);
 
-        // Fullscreen Video Container
         customViewContainer = new FrameLayout(this);
         customViewContainer.setLayoutParams(new ViewGroup.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
@@ -140,13 +152,8 @@ public class MainActivity extends AppCompatActivity {
         customViewContainer.setBackgroundColor(Color.BLACK);
         customViewContainer.setVisibility(View.GONE);
 
-        // Floating Control Pill
         drBadge = createDrMuhammedBadge();
-
-        // Native Virtual Mouse Pointer Overlay
         nativeCursorView = createNativeCursorView();
-
-        // Splash Screen
         splashLayout = createSplashScreen();
 
         rootLayout.addView(webView);
@@ -157,7 +164,6 @@ public class MainActivity extends AppCompatActivity {
         rootLayout.addView(splashLayout);
         setContentView(rootLayout);
 
-        // Configure WebSettings for High Performance on Android TV
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
@@ -173,76 +179,16 @@ public class MainActivity extends AppCompatActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         settings.setTextZoom(100);
 
-        // Remove '; wv' from User-Agent for standard browser compatibility
         String defaultUa = settings.getUserAgentString();
         if (defaultUa != null) {
             settings.setUserAgentString(defaultUa.replace("; wv", ""));
         }
 
-        // Cookie management
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
 
-        webView.setWebViewClient(new WebViewClient() {
-            @Override
-            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
-                String url = request.getUrl().toString();
-                if (url.startsWith("http://") || url.startsWith("https://")) {
-                    return false;
-                }
-                try {
-                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
-                    startActivity(intent);
-                } catch (Exception ignored) {}
-                return true;
-            }
-
-            @Override
-            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                if (isAdBlockActive && request != null && request.getUrl() != null) {
-                    String url = request.getUrl().toString();
-                    if (isAdOrTracker(url)) {
-                        return new WebResourceResponse("text/plain", "UTF-8", new ByteArrayInputStream(new byte[0]));
-                    }
-                }
-                return super.shouldInterceptRequest(view, request);
-            }
-
-            @Override
-            public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                progressBar.setVisibility(View.VISIBLE);
-                progressBar.setProgress(15);
-            }
-
-            @Override
-            public void onPageFinished(WebView view, String url) {
-                progressBar.setVisibility(View.GONE);
-                CookieManager.getInstance().flush();
-                webView.requestFocus();
-
-                // Inject TV subtitle & focus enhancements
-                injectTvSubtitleAndControlEnhancements();
-
-                hideSplashScreen();
-                updateBadgePill();
-            }
-
-            @Override
-            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-                handler.proceed();
-            }
-
-            @Override
-            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-                if (request.isForMainFrame()) {
-                    progressBar.setVisibility(View.GONE);
-                    hideSplashScreen();
-                }
-            }
-        });
-
-        webView.setWebChromeClient(new WebChromeClient() {
+        activeChromeClient = new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
                 progressBar.setProgress(newProgress);
@@ -254,7 +200,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (customView != null) {
-                    onHideCustomView();
+                    exitFullscreen();
                     return;
                 }
                 customView = view;
@@ -262,7 +208,6 @@ public class MainActivity extends AppCompatActivity {
                 webView.setVisibility(View.GONE);
                 customViewContainer.setVisibility(View.VISIBLE);
                 customViewContainer.addView(view);
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
                 hideSystemUI();
                 if (nativeCursorView != null) {
                     nativeCursorView.bringToFront();
@@ -271,24 +216,13 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onHideCustomView() {
-                if (customView == null) return;
-                customViewContainer.removeView(customView);
-                customView = null;
-                customViewContainer.setVisibility(View.GONE);
-                webView.setVisibility(View.VISIBLE);
-                if (customViewCallback != null) {
-                    customViewCallback.onCustomViewHidden();
-                    customViewCallback = null;
-                }
-                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
-                hideSystemUI();
-                webView.requestFocus();
+                exitFullscreen();
             }
 
             @Override
-            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback,
+            public boolean onShowFileChooser(WebView wv, ValueCallback<Uri[]> callback,
                                              FileChooserParams fileChooserParams) {
-                MainActivity.this.filePathCallback = filePathCallback;
+                MainActivity.this.filePathCallback = callback;
                 try {
                     Intent intent = fileChooserParams.createIntent();
                     startActivityForResult(intent, FILE_CHOOSER_REQUEST_CODE);
@@ -301,6 +235,93 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public boolean onConsoleMessage(ConsoleMessage consoleMessage) {
+                return true;
+            }
+        };
+        webView.setWebChromeClient(activeChromeClient);
+
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                // Legacy overload (API 21-23) - keeps old TVs working
+                return handleUrlOverride(view, url);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return handleUrlOverride(view, request.getUrl().toString());
+            }
+
+            @Override
+            public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
+                if (isAdBlockActive && request != null && request.getUrl() != null) {
+                    String url = request.getUrl().toString();
+                    if (isAdOrTracker(url)) {
+                        return new WebResourceResponse("text/plain", "UTF-8",
+                            new ByteArrayInputStream(new byte[0]));
+                    }
+                }
+                return super.shouldInterceptRequest(view, request);
+            }
+
+            @Override
+            public void onPageStarted(WebView view, String url, Bitmap favicon) {
+                mainFrameError = false;
+                progressBar.setVisibility(View.VISIBLE);
+                progressBar.setProgress(15);
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                progressBar.setVisibility(View.GONE);
+                CookieManager.getInstance().flush();
+                webView.requestFocus();
+                if (!mainFrameError) {
+                    injectTvEngine();
+                }
+                hideSplashScreen();
+                updateBadgePill();
+            }
+
+            @Override
+            public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
+                handler.proceed();
+            }
+
+            @Override
+            public void onReceivedError(WebView view, int errorCode, String description, String failingUrl) {
+                // Legacy overload (API 21-23)
+                handleMainFrameError(failingUrl);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request != null && request.isForMainFrame()) {
+                    handleMainFrameError(request.getUrl().toString());
+                }
+            }
+
+            @Override
+            public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                // WebView renderer crashed: recover instead of leaving a black screen
+                long now = System.currentTimeMillis();
+                if (now - lastRendererCrashAt < 60000L) {
+                    rendererCrashCount++;
+                } else {
+                    rendererCrashCount = 1;
+                }
+                lastRendererCrashAt = now;
+
+                if (rendererCrashCount <= 2) {
+                    rebuildWebView();
+                    Toast.makeText(MainActivity.this,
+                        "تم استعادة المحرك تلقائياً بعد عطل مؤقت 🔄",
+                        Toast.LENGTH_SHORT).show();
+                } else {
+                    Toast.makeText(MainActivity.this,
+                        "عطل متكرر في محرك العرض. أغلق التطبيق وافتحه مرة أخرى 🛠️",
+                        Toast.LENGTH_LONG).show();
+                }
                 return true;
             }
         });
@@ -322,14 +343,59 @@ public class MainActivity extends AppCompatActivity {
             webView.loadUrl(TARGET_URL);
         }
 
-        Toast.makeText(this, "ðŸŽ¬ CineJoy TV Edition â€” By Dr. Muhammed", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "🎬 CineJoy TV v2.0 — By Dr. Muhammed", Toast.LENGTH_SHORT).show();
 
-        new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+        mainHandler.postDelayed(new Runnable() {
             @Override
             public void run() {
                 hideSplashScreen();
             }
-        }, 3000);
+        }, 6000);
+    }
+
+    private boolean handleUrlOverride(WebView view, String url) {
+        if (url == null) return false;
+        if (url.startsWith("http://") || url.startsWith("https://")) {
+            return false;
+        }
+        try {
+            Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            startActivity(intent);
+        } catch (Exception ignored) {}
+        return true;
+    }
+
+    private void handleMainFrameError(String url) {
+        mainFrameError = true;
+        progressBar.setVisibility(View.GONE);
+        hideSplashScreen();
+        if (webView != null) {
+            webView.loadData(buildErrorPageHtml(url), "text/html; charset=utf-8", "UTF-8");
+        }
+    }
+
+    private String buildErrorPageHtml(String url) {
+        return "<!DOCTYPE html><html dir='rtl'><head><meta charset='utf-8'>"
+            + "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+            + "<style>body{background:#050505;color:#fff;font-family:sans-serif;display:flex;"
+            + "flex-direction:column;align-items:center;justify-content:center;height:100vh;margin:0;}"
+            + "h1{color:#95FF50;font-size:28px;margin-bottom:8px;}"
+            + "p{color:#ccc;font-size:16px;text-align:center;line-height:1.7;max-width:80%;}"
+            + ".hint{color:#95FF50;font-size:14px;margin-top:16px;}</style></head><body>"
+            + "<h1>تعذر الاتصال بالإنترنت</h1>"
+            + "<p>تأكد من اتصال التلفاز بشبكة Wi-Fi ثم أعد المحاولة.</p>"
+            + "<p class='hint'>اضغط زر القائمة (MENU) في الريموت ثم اختر «إعادة تحميل الصفحة»</p>"
+            + "</body></html>";
+    }
+
+    private void rebuildWebView() {
+        try {
+            if (webView != null) {
+                webView.stopLoading();
+                webView.loadUrl("about:blank");
+            }
+        } catch (Exception ignored) {}
+        recreate();
     }
 
     private boolean isAdOrTracker(String url) {
@@ -342,7 +408,117 @@ public class MainActivity extends AppCompatActivity {
     }
 
     // ==========================================
-    // NATIVE VIRTUAL MOUSE ENGINE (SMOOTH & FAST)
+    // TV ENGINE INJECTION (ES5-COMPATIBLE JS)
+    // Works on old Chromium 37 WebView (Android 5)
+    // ==========================================
+
+    private void injectTvEngine() {
+        if (webView == null) return;
+
+        String js = "(function(){"
+            + "if(window.__cinejoyReady)return;"
+            + "window.__cinejoyReady=true;"
+            + "var style=document.createElement('style');"
+            + "style.textContent='.cinejoy-focused{outline:3px solid #95FF50 !important;"
+            + "outline-offset:2px !important;border-radius:6px !important;}'"
+            + "+'*{-webkit-tap-highlight-color:rgba(149,255,80,0.25) !important;}';"
+            + "try{(document.head||document.documentElement).appendChild(style);}catch(e){}"
+            + "window.open=function(){return null;};"
+            + "try{localStorage.setItem('addies','false');}catch(e){}"
+            + "var SEL='a[href],button,input:not([type=hidden]):not([disabled]),select,textarea,"
+            + "[tabindex]:not([tabindex=\"-1\"]),[role=\"button\"],[role=\"menuitem\"],"
+            + "[role=\"option\"],[role=\"tab\"],[onclick],.art-subtitle,.art-setting,"
+            + ".art-control,.art-icon,.art-server,.vjs-menu-item,.vjs-menu-button,.vjs-button,"
+            + "li[data-val],.dropdown-item,.server-item,.episode-item,.quality-item,.subtitle-item,"
+            + ".sliders_item,.video-item,.poster,.poster-item,.film-item';"
+            + "var lastFocused=null;"
+            + "function vis(el){"
+            + "try{var r=el.getBoundingClientRect();"
+            + "if(r.width<4||r.height<4)return false;"
+            + "var s=window.getComputedStyle(el);"
+            + "if(s.display==='none'||s.visibility==='hidden')return false;"
+            + "if(s.opacity==='0')return false;"
+            + "return true;}catch(e){return false;}"
+            + "}"
+            + "function cands(){"
+            + "try{var els=document.querySelectorAll(SEL);var out=[];"
+            + "for(var i=0;i<els.length;i++){var e=els[i];"
+            + "if(!e.hasAttribute('tabindex')&&!e.disabled){"
+            + "try{e.setAttribute('tabindex','0');}catch(e2){}}"
+            + "if(vis(e)){e.__cr=e.getBoundingClientRect();out.push(e);}}"
+            + "return out;}catch(e){return [];}"
+            + "}"
+            + "function cx(e){var r=e.__cr;try{if(!r)r=e.getBoundingClientRect();}catch(er){return 0;}return r.left+r.width/2;}"
+            + "function cy(e){var r=e.__cr;try{if(!r)r=e.getBoundingClientRect();}catch(er){return 0;}return r.top+r.height/2;}"
+            + "function mark(el){"
+            + "if(lastFocused&&lastFocused.classList){try{lastFocused.classList.remove('cinejoy-focused');}catch(e){}}"
+            + "lastFocused=el;"
+            + "if(el.classList){try{el.classList.add('cinejoy-focused');}catch(e){}}"
+            + "try{el.focus();}catch(e){}"
+            + "try{el.scrollIntoView(false);}catch(e){}"
+            + "}"
+            + "function first(){"
+            + "var cs=cands();if(!cs.length)return false;"
+            + "var best=cs[0],bd=9999999;"
+            + "var sx=window.innerWidth/2,sy=window.innerHeight/2;"
+            + "for(var i=0;i<cs.length;i++){"
+            + "var d=Math.abs(cx(cs[i])-sx)+Math.abs(cy(cs[i])-sy);"
+            + "if(d<bd){bd=d;best=cs[i];}}"
+            + "mark(best);return true;"
+            + "}"
+            + "window.__cinejoyMove=function(dir){"
+            + "var cs=cands();if(!cs.length)return 'none';"
+            + "var cur=null;"
+            + "if(lastFocused&&vis(lastFocused))cur=lastFocused;"
+            + "else if(document.activeElement&&document.activeElement!==document.body"
+            + "&&document.activeElement!==document.documentElement)cur=document.activeElement;"
+            + "if(!cur){return first()?'focus':'none';}"
+            + "var bx=cx(cur),by=cy(cur);"
+            + "var best=null,bd=9999999;"
+            + "for(var i=0;i<cs.length;i++){"
+            + "var e=cs[i];if(e===cur)continue;"
+            + "var dx=cx(e)-bx,dy=cy(e)-by;"
+            + "var along,perp;"
+            + "if(dir==='left'){if(dx>=-6)continue;along=-dx;perp=Math.abs(dy);}"
+            + "else if(dir==='right'){if(dx<=6)continue;along=dx;perp=Math.abs(dy);}"
+            + "else if(dir==='up'){if(dy>=-6)continue;along=-dy;perp=Math.abs(dx);}"
+            + "else{if(dy<=6)continue;along=dy;perp=Math.abs(dx);}"
+            + "var d=along+perp*2.2;"
+            + "if(d<bd){bd=d;best=e;}}"
+            + "if(!best){"
+            + "if(dir==='up')window.scrollBy(0,-240);"
+            + "else if(dir==='down')window.scrollBy(0,240);"
+            + "else if(dir==='left')window.scrollBy(-180,0);"
+            + "else window.scrollBy(180,0);"
+            + "return 'scroll';}"
+            + "mark(best);return 'focus';"
+            + "};"
+            + "window.__cinejoyClick=function(){"
+            + "var el=(lastFocused&&vis(lastFocused))?lastFocused:"
+            + "((document.activeElement&&document.activeElement!==document.body"
+            + "&&document.activeElement!==document.documentElement)?document.activeElement:null);"
+            + "if(!el)return 'none';"
+            + "var r=null;try{r=el.getBoundingClientRect();}catch(e){}"
+            + "var x=r?r.left+r.width/2:0,y=r?r.top+r.height/2:0;"
+            + "var opts={bubbles:true,cancelable:true,view:window,clientX:x,clientY:y,button:0};"
+            + "function fire(t){"
+            + "try{var ev=(typeof PointerEvent==='function')"
+            + "?new PointerEvent(t,opts):new MouseEvent(t,opts);"
+            + "el.dispatchEvent(ev);}catch(e){}"
+            + "}"
+            + "try{el.focus();}catch(e){}"
+            + "fire('pointerdown');fire('mousedown');fire('touchstart');"
+            + "fire('pointerup');fire('mouseup');fire('touchend');"
+            + "try{el.click();}catch(e){}"
+            + "return 'click';"
+            + "};"
+            + "})();";
+
+        webView.evaluateJavascript(js, null);
+    }
+
+    // ==========================================
+    // NATIVE VIRTUAL MOUSE ENGINE
     // ==========================================
 
     private FrameLayout createNativeCursorView() {
@@ -352,17 +528,15 @@ public class MainActivity extends AppCompatActivity {
         RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(sizePx, sizePx);
         container.setLayoutParams(params);
 
-        // High-contrast outer neon circle
         View outerRing = new View(this);
         GradientDrawable ring = new GradientDrawable();
         ring.setShape(GradientDrawable.OVAL);
-        ring.setColor(Color.parseColor("#8895FF50"));
+        ring.setColor(Color.parseColor("#7795FF50"));
         ring.setStroke(3, Color.parseColor("#95FF50"));
         outerRing.setBackground(ring);
         FrameLayout.LayoutParams ringParams = new FrameLayout.LayoutParams(sizePx, sizePx);
         outerRing.setLayoutParams(ringParams);
 
-        // Center crosshair pointer dot
         View centerDot = new View(this);
         GradientDrawable dot = new GradientDrawable();
         dot.setShape(GradientDrawable.OVAL);
@@ -386,8 +560,7 @@ public class MainActivity extends AppCompatActivity {
         nativeCursorView.setX(cursorX - size / 2f);
         nativeCursorView.setY(cursorY - size / 2f);
 
-        // Auto edge scrolling
-        if (webView != null) {
+        if (webView != null && customView == null) {
             if (cursorY < 120) {
                 webView.scrollBy(0, -60);
             } else if (cursorY > screenHeight - 120) {
@@ -397,15 +570,16 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Dispatches native hardware touch events (ACTION_DOWN + ACTION_UP) directly to the active surface.
-     * Guaranteed to trigger touches inside any video player, iframe, or subtitle list!
+     * Dispatches a native touch (DOWN -> small MOVE -> UP after a real delay) at (x, y).
+     * The delay is essential: instant DOWN+UP pairs are ignored by Artplayer/Vidlink players.
      */
     private void dispatchNativeClick(float x, float y) {
-        View target = (customViewContainer != null && customViewContainer.getVisibility() == View.VISIBLE && customView != null)
-            ? customView : webView;
+        final View target = (customViewContainer != null
+            && customViewContainer.getVisibility() == View.VISIBLE
+            && customView != null) ? customView : webView;
 
         if (target == null) return;
-        long downTime = SystemClock.uptimeMillis();
+        final long now = SystemClock.uptimeMillis();
 
         MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[1];
         props[0] = new MotionEvent.PointerProperties();
@@ -419,28 +593,33 @@ public class MainActivity extends AppCompatActivity {
         coords[0].pressure = 1.0f;
         coords[0].size = 1.0f;
 
-        MotionEvent downEvent = MotionEvent.obtain(
-            downTime, downTime,
-            MotionEvent.ACTION_DOWN,
-            1, props, coords,
-            0, 0, 1f, 1f, 0, 0,
-            0, 0
-        );
+        try {
+            MotionEvent downEvent = MotionEvent.obtain(
+                now, now, MotionEvent.ACTION_DOWN, 1, props, coords,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
+            target.dispatchTouchEvent(downEvent);
+            downEvent.recycle();
 
-        MotionEvent upEvent = MotionEvent.obtain(
-            downTime, downTime + 70,
-            MotionEvent.ACTION_UP,
-            1, props, coords,
-            0, 0, 1f, 1f, 0, 0,
-            0, 0
-        );
+            MotionEvent moveEvent = MotionEvent.obtain(
+                now, now + 40, MotionEvent.ACTION_MOVE, 1, props, coords,
+                0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
+            target.dispatchTouchEvent(moveEvent);
+            moveEvent.recycle();
 
-        target.dispatchTouchEvent(downEvent);
-        target.dispatchTouchEvent(upEvent);
-        downEvent.recycle();
-        upEvent.recycle();
+            mainHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        MotionEvent upEvent = MotionEvent.obtain(
+                            now, now + 90, MotionEvent.ACTION_UP, 1, props, coords,
+                            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0);
+                        target.dispatchTouchEvent(upEvent);
+                        upEvent.recycle();
+                    } catch (Exception ignored) {}
+                }
+            }, 80);
+        } catch (Exception ignored) {}
 
-        // Cursor visual pulse animation
         if (nativeCursorView != null) {
             nativeCursorView.animate()
                 .scaleX(0.6f)
@@ -470,18 +649,17 @@ public class MainActivity extends AppCompatActivity {
                 updateCursorPosition();
             } else {
                 nativeCursorView.setVisibility(View.GONE);
+                if (webView != null) webView.requestFocus();
             }
         }
 
         updateBadgePill();
 
-        Toast.makeText(
-            this,
+        Toast.makeText(this,
             isMouseModeActive
-                ? "ðŸŽ¯ Ù†Ù…Ø· Ø§Ù„Ù…Ø§ÙˆØ³ Ù…ÙØ¹Ù‘Ù„: Ø­Ø±Ù‘Ùƒ Ø¨Ø§Ù„Ø£Ø³Ù‡Ù… ÙˆØ§Ø¶ØºØ· OK Ù„Ù„Ù†Ù‚Ø± Ø¹Ù„Ù‰ Ø§Ù„ØªØ±Ø¬Ù…Ø© ÙˆØ§Ù„Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª\n(Ø§Ø¶ØºØ· BACK Ø£Ùˆ OK Ù…Ø·ÙˆÙ„Ø§Ù‹ Ù„Ù„Ø±Ø¬ÙˆØ¹)"
-                : "ðŸ“± Ù†Ù…Ø· Ø§Ù„Ø£Ø³Ù‡Ù… Ù…ÙØ¹Ù‘Ù„ (Ø§Ø¶ØºØ· Ù…Ø·ÙˆÙ„Ø§Ù‹ Ø¹Ù„Ù‰ OK Ø£Ùˆ Ø²Ø± Ø§Ù„Ù‚Ø§Ø¦Ù…Ø© Ù„ØªÙØ¹ÙŠÙ„ Ø§Ù„Ù…Ø§ÙˆØ³)",
-            Toast.LENGTH_SHORT
-        ).show();
+                ? "🎯 نمط الماوس مفعّل: حرّك بالأسهم واضغط OK للنقر (BACK للرجوع)"
+                : "📱 نمط الأسهم مفعّل (OK مطولاً لتفعيل الماوس)",
+            Toast.LENGTH_SHORT).show();
     }
 
     private void updateBadgePill() {
@@ -490,24 +668,50 @@ public class MainActivity extends AppCompatActivity {
         drBadge.setAlpha(1.0f);
         drBadge.setVisibility(View.VISIBLE);
 
+        GradientDrawable bg = new GradientDrawable();
         if (isMouseModeActive) {
-            drBadge.setText("ðŸŽ¯ Ù…Ø§ÙˆØ³ Ù…ÙØ¹Ù‘Ù„ | BACK Ù„Ù„Ø®Ø±ÙˆØ¬");
+            drBadge.setText("🎯 ماوس مفعّل | BACK للخروج");
             drBadge.setTextColor(Color.parseColor("#050505"));
-            GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.parseColor("#95FF50"));
             bg.setCornerRadius(30);
-            drBadge.setBackground(bg);
-            drBadge.setAlpha(1.0f);
         } else {
-            drBadge.setText("ðŸ“± Ø±ÙŠÙ…ÙˆØª | ðŸŽ¯ Ø§Ù„Ù…Ø§ÙˆØ³ (OK Ù…Ø·ÙˆÙ„Ø§Ù‹)");
+            drBadge.setText("📱 ريموت | 🎯 الماوس (OK مطولاً)");
             drBadge.setTextColor(Color.parseColor("#95FF50"));
-            GradientDrawable bg = new GradientDrawable();
             bg.setColor(Color.parseColor("#CC111111"));
             bg.setCornerRadius(30);
             bg.setStroke(2, Color.parseColor("#95FF50"));
-            drBadge.setBackground(bg);
+        }
+        drBadge.setBackground(bg);
+        if (!isMouseModeActive) {
             drBadge.animate().alpha(0.70f).setDuration(500).setStartDelay(3000).start();
         }
+    }
+
+    private void exitFullscreen() {
+        if (customView == null) return;
+        try {
+            customViewContainer.removeView(customView);
+        } catch (Exception ignored) {}
+        customView = null;
+        customViewContainer.setVisibility(View.GONE);
+        webView.setVisibility(View.VISIBLE);
+        if (customViewCallback != null) {
+            try {
+                customViewCallback.onCustomViewHidden();
+            } catch (Exception ignored) {}
+            customViewCallback = null;
+        }
+        hideSystemUI();
+        webView.requestFocus();
+    }
+
+    private void sendVideoCommand(String jsBody) {
+        if (webView == null) return;
+        webView.evaluateJavascript(
+            "(function(){var v=document.querySelector('video');"
+                + "if(!v){var vs=document.querySelectorAll('video');"
+                + "for(var i=0;i<vs.length;i++){if(vs[i].offsetWidth>0){v=vs[i];break;}}}"
+                + "if(v){" + jsBody + "}})()", null);
     }
 
     // ==========================================
@@ -517,37 +721,36 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
 
-        // 1. Long-press OK (450ms) to toggle Mouse Mode
+        // 1. OK / ENTER: long-press toggles Mouse Mode
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-                || keyCode == KeyEvent.KEYCODE_ENTER
-                || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            || keyCode == KeyEvent.KEYCODE_ENTER
+            || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
 
             if (event.getRepeatCount() == 0) {
-                isDpadCenterLongPressing = false;
-                dpadLongPressRunnable = new Runnable() {
+                isOkLongPressFired = false;
+                okLongPressRunnable = new Runnable() {
                     @Override
                     public void run() {
-                        isDpadCenterLongPressing = true;
+                        isOkLongPressFired = true;
                         toggleNativeMouseMode();
                     }
                 };
-                dpadHandler.postDelayed(dpadLongPressRunnable, 450);
+                mainHandler.postDelayed(okLongPressRunnable, OK_LONG_PRESS_MS);
             }
             return true;
         }
 
-        // 2. Direct shortcut keys to toggle Mouse Mode:
-        // Yellow button, Blue button, or Info key on TV remote toggles Mouse Mode instantly!
+        // 2. Direct shortcuts (yellow / blue / info / gamepad-Y) toggle Mouse Mode
         if (keyCode == KeyEvent.KEYCODE_PROG_YELLOW || keyCode == KeyEvent.KEYCODE_PROG_BLUE
-                || keyCode == KeyEvent.KEYCODE_INFO || keyCode == KeyEvent.KEYCODE_BUTTON_Y) {
+            || keyCode == KeyEvent.KEYCODE_INFO || keyCode == KeyEvent.KEYCODE_BUTTON_Y) {
             toggleNativeMouseMode();
             return true;
         }
 
-        // 3. When Mouse Mode is active: Arrow keys ONLY move cursor smoothly
+        // 3. Mouse mode: arrows move the cursor with real acceleration
         if (isMouseModeActive) {
             int repeat = event.getRepeatCount();
-            float step = Math.min(65f, 18f + repeat * 4f);
+            float step = Math.min(110f, 20f + repeat * 6f);
 
             switch (keyCode) {
                 case KeyEvent.KEYCODE_DPAD_UP:
@@ -567,23 +770,39 @@ public class MainActivity extends AppCompatActivity {
                     updateCursorPosition();
                     return true;
                 case KeyEvent.KEYCODE_BACK:
-                    toggleNativeMouseMode(); // Back exits mouse mode first
+                    toggleNativeMouseMode();
+                    return true;
+                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                case KeyEvent.KEYCODE_MEDIA_PLAY:
+                case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                    dispatchNativeClick(cursorX, cursorY);
                     return true;
             }
             return true;
         }
 
-        // 4. In Normal Mode: Directional Arrows
-        // Pass them directly to WebView / Video Player
+        // 4. Normal mode: arrows go through our JS spatial navigation engine
         switch (keyCode) {
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_DPAD_DOWN:
             case KeyEvent.KEYCODE_DPAD_LEFT:
             case KeyEvent.KEYCODE_DPAD_RIGHT:
+                if (webView != null) {
+                    String dir;
+                    switch (keyCode) {
+                        case KeyEvent.KEYCODE_DPAD_UP: dir = "up"; break;
+                        case KeyEvent.KEYCODE_DPAD_DOWN: dir = "down"; break;
+                        case KeyEvent.KEYCODE_DPAD_LEFT: dir = "left"; break;
+                        default: dir = "right"; break;
+                    }
+                    webView.evaluateJavascript(
+                        "window.__cinejoyMove&&window.__cinejoyMove('" + dir + "')", null);
+                    return true;
+                }
                 return super.onKeyDown(keyCode, event);
         }
 
-        // 5. Menu & Media Keys
+        // 5. Menu & media keys
         switch (keyCode) {
             case KeyEvent.KEYCODE_MENU:
             case KeyEvent.KEYCODE_SETTINGS:
@@ -594,40 +813,20 @@ public class MainActivity extends AppCompatActivity {
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_MEDIA_PLAY:
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                if (webView != null) {
-                    webView.evaluateJavascript(
-                        "(function() { var v = document.querySelector('video'); if (v) { if (v.paused) v.play(); else v.pause(); } })()",
-                        null
-                    );
-                    return true;
-                }
-                break;
+                sendVideoCommand("if(v.paused){v.play();}else{v.pause();}");
+                return true;
 
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-                if (webView != null) {
-                    webView.evaluateJavascript(
-                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime += 10; })()",
-                        null
-                    );
-                    return true;
-                }
-                break;
+                sendVideoCommand("v.currentTime+=10;");
+                return true;
 
             case KeyEvent.KEYCODE_MEDIA_REWIND:
-                if (webView != null) {
-                    webView.evaluateJavascript(
-                        "(function() { var v = document.querySelector('video'); if (v) v.currentTime -= 10; })()",
-                        null
-                    );
-                    return true;
-                }
-                break;
+                sendVideoCommand("v.currentTime-=10;");
+                return true;
 
             case KeyEvent.KEYCODE_BACK:
                 if (customView != null) {
-                    if (webView != null && webView.getWebChromeClient() != null) {
-                        ((WebChromeClient) webView.getWebChromeClient()).onHideCustomView();
-                    }
+                    exitFullscreen();
                     return true;
                 }
                 if (webView != null && webView.canGoBack()) {
@@ -644,37 +843,25 @@ public class MainActivity extends AppCompatActivity {
     @Override
     public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-                || keyCode == KeyEvent.KEYCODE_ENTER
-                || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            || keyCode == KeyEvent.KEYCODE_ENTER
+            || keyCode == KeyEvent.KEYCODE_NUMPAD_ENTER) {
 
-            // Cancel the long-press timer
-            if (dpadLongPressRunnable != null) {
-                dpadHandler.removeCallbacks(dpadLongPressRunnable);
-                dpadLongPressRunnable = null;
+            if (okLongPressRunnable != null) {
+                mainHandler.removeCallbacks(okLongPressRunnable);
+                okLongPressRunnable = null;
             }
 
-            // If long-press just fired, consume and don't click
-            if (isDpadCenterLongPressing) {
-                isDpadCenterLongPressing = false;
+            if (isOkLongPressFired) {
+                isOkLongPressFired = false;
                 return true;
             }
 
-            // Click action:
             if (isMouseModeActive) {
                 dispatchNativeClick(cursorX, cursorY);
             } else {
-                // In D-Pad mode, trigger click on activeElement or subtitles
                 if (webView != null) {
                     webView.evaluateJavascript(
-                        "(function() {" +
-                        "  var el = document.activeElement;" +
-                        "  if (el && el !== document.body) {" +
-                        "    if (typeof el.click === 'function') el.click();" +
-                        "    else el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));" +
-                        "  }" +
-                        "})();",
-                        null
-                    );
+                        "window.__cinejoyClick&&window.__cinejoyClick()", null);
                 }
             }
             return true;
@@ -716,7 +903,7 @@ public class MainActivity extends AppCompatActivity {
         titleText.setGravity(Gravity.CENTER);
 
         TextView authorText = new TextView(this);
-        authorText.setText("âš¡ TV Edition â€” Developed by Dr. Muhammed");
+        authorText.setText("⚡ TV Edition — Developed by Dr. Muhammed");
         authorText.setTextSize(15);
         authorText.setTextColor(Color.parseColor("#DDDDDD"));
         authorText.setGravity(Gravity.CENTER);
@@ -734,11 +921,11 @@ public class MainActivity extends AppCompatActivity {
         if (splashLayout != null && splashLayout.getVisibility() == View.VISIBLE) {
             splashLayout.animate()
                 .alpha(0f)
-                .setDuration(300)
-                .setListener(new AnimatorListenerAdapter() {
+                .setDuration(250)
+                .setListener(new android.animation.AnimatorListenerAdapter() {
                     @Override
-                    public void onAnimationEnd(Animator animation) {
-                        splashLayout.setVisibility(View.GONE);
+                    public void onAnimationEnd(android.animation.Animator animation) {
+                        if (splashLayout != null) splashLayout.setVisibility(View.GONE);
                     }
                 });
         }
@@ -746,7 +933,7 @@ public class MainActivity extends AppCompatActivity {
 
     private TextView createDrMuhammedBadge() {
         TextView badge = new TextView(this);
-        badge.setText("ðŸ“± Ø±ÙŠÙ…ÙˆØª | ðŸŽ¯ Ø§Ù„Ù…Ø§ÙˆØ³");
+        badge.setText("📱 ريموت | 🎯 الماوس");
         badge.setTextSize(11);
         badge.setTextColor(Color.parseColor("#95FF50"));
         badge.setTypeface(Typeface.DEFAULT_BOLD);
@@ -767,7 +954,6 @@ public class MainActivity extends AppCompatActivity {
         badgeParams.setMargins(0, 20, 20, 0);
         badge.setLayoutParams(badgeParams);
 
-        // Clicking the badge directly toggles Mouse Mode or opens menu
         badge.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
@@ -795,17 +981,17 @@ public class MainActivity extends AppCompatActivity {
         }
 
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("ðŸŽ¬ CineJoy TV Hub â€” By Dr. Muhammed");
+        builder.setTitle("🎬 CineJoy TV Hub — By Dr. Muhammed");
 
         String[] options = {
-            "ðŸŽ¯ Ù…Ø¤Ø´Ø± Ø§Ù„Ù…Ø§ÙˆØ³ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ: " + (isMouseModeActive ? "Ù…ÙØ¹Ù‘Ù„ ðŸŸ¢ (Ø§Ø¶ØºØ· Ù„Ù„ØªØ¹Ø·ÙŠÙ„)" : "Ù…Ø¹Ø·Ù‘Ù„ âšª (Ø§Ø¶ØºØ· Ù„Ù„ØªÙØ¹ÙŠÙ„)"),
-            "ðŸ›¡ï¸ Ø­Ø¸Ø± Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª ÙˆØ§Ù„Ø¨ÙˆØ¨ Ø£Ø¨: " + (isAdBlockActive ? "Ù…ÙØ¹Ù‘Ù„ âœ…" : "Ù…Ø¹Ø·Ù‘Ù„ âŒ"),
-            "âš¡ Ø³Ø±Ø¹Ø© Ø§Ù„ØªØ´ØºÙŠÙ„: " + currentPlaybackSpeed + "x",
-            "â© ØªØ®Ø·ÙŠ Ø§Ù„Ù…Ù‚Ø¯Ù…Ø© (Skip 85s)",
-            "ðŸ”„ Ø¥Ø¹Ø§Ø¯Ø© ØªØ­Ù…ÙŠÙ„ Ø§Ù„ØµÙØ­Ø©",
-            "ðŸ§¹ Ù…Ø³Ø­ Ø§Ù„Ø°Ø§ÙƒØ±Ø© Ø§Ù„Ù…Ø¤Ù‚ØªØ© (Clear Cache)",
-            "â„¹ï¸ Ø­ÙˆÙ„ Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ ÙˆØ§Ù„Ù…Ø·ÙˆØ±",
-            "ðŸšª Ø®Ø±ÙˆØ¬ Ù…Ù† Ø§Ù„ØªØ·Ø¨ÙŠÙ‚"
+            "🎯 المؤشر الافتراضي: " + (isMouseModeActive ? "مفعّل 🟢" : "معطّل ⚪"),
+            "🛡️ حظر الإعلانات: " + (isAdBlockActive ? "مفعّل ✅" : "معطّل ❌"),
+            "⚡ سرعة التشغيل: " + currentPlaybackSpeed + "x",
+            "⏩ تخطي المقدمة (Skip 85s)",
+            "🔄 إعادة تحميل الصفحة",
+            "🧹 مسح الذاكرة المؤقتة (Clear Cache)",
+            "ℹ️ حول التطبيق والمطور",
+            "🚪 خروج من التطبيق"
         };
 
         builder.setItems(options, new DialogInterface.OnClickListener() {
@@ -818,7 +1004,7 @@ public class MainActivity extends AppCompatActivity {
                     case 1:
                         isAdBlockActive = !isAdBlockActive;
                         Toast.makeText(MainActivity.this,
-                            isAdBlockActive ? "ØªÙ… ØªÙØ¹ÙŠÙ„ Ø­Ø¸Ø± Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª âœ…" : "ØªÙ… ØªØ¹Ø·ÙŠÙ„ Ø­Ø¸Ø± Ø§Ù„Ø¥Ø¹Ù„Ø§Ù†Ø§Øª âŒ",
+                            isAdBlockActive ? "تم تفعيل حظر الإعلانات ✅" : "تم تعطيل حظر الإعلانات ❌",
                             Toast.LENGTH_SHORT).show();
                         if (webView != null) webView.reload();
                         break;
@@ -836,7 +1022,8 @@ public class MainActivity extends AppCompatActivity {
                             webView.clearCache(true);
                             CookieManager.getInstance().removeAllCookies(null);
                             webView.reload();
-                            Toast.makeText(MainActivity.this, "ØªÙ… Ù…Ø³Ø­ Ø§Ù„Ø°Ø§ÙƒØ±Ø© ÙˆØ¥Ø¹Ø§Ø¯Ø© Ø§Ù„ØªØ­Ù…ÙŠÙ„ ðŸ§¹", Toast.LENGTH_SHORT).show();
+                            Toast.makeText(MainActivity.this, "تم مسح الذاكرة وإعادة التحميل 🧹",
+                                Toast.LENGTH_SHORT).show();
                         }
                         break;
                     case 6:
@@ -851,7 +1038,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        builder.setNegativeButton("Ø¥ØºÙ„Ø§Ù‚", new DialogInterface.OnClickListener() {
+        builder.setNegativeButton("إغلاق", new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface d, int w) {
                 hideSystemUI();
@@ -869,106 +1056,52 @@ public class MainActivity extends AppCompatActivity {
         else if (currentPlaybackSpeed == 1.5f) currentPlaybackSpeed = 2.0f;
         else currentPlaybackSpeed = 1.0f;
 
-        if (webView != null) {
-            webView.evaluateJavascript(
-                "(function() { var v = document.querySelector('video'); if (v) { v.playbackRate = " + currentPlaybackSpeed + "; } })()",
-                null
-            );
-        }
-        Toast.makeText(this, "âš¡ Ø³Ø±Ø¹Ø© Ø§Ù„ÙÙŠØ¯ÙŠÙˆ: " + currentPlaybackSpeed + "x", Toast.LENGTH_SHORT).show();
+        sendVideoCommand("v.playbackRate=" + currentPlaybackSpeed + ";");
+        Toast.makeText(this, "⚡ سرعة الفيديو: " + currentPlaybackSpeed + "x", Toast.LENGTH_SHORT).show();
     }
 
     private void skipIntro() {
-        if (webView != null) {
-            webView.evaluateJavascript(
-                "(function() { var v = document.querySelector('video'); if (v) { v.currentTime += 85; } })()",
-                null
-            );
-            Toast.makeText(this, "â© ØªÙ… ØªØ®Ø·ÙŠ 85 Ø«Ø§Ù†ÙŠØ© (Ø§Ù„Ù…Ù‚Ø¯Ù…Ø©)", Toast.LENGTH_SHORT).show();
-        }
+        sendVideoCommand("v.currentTime+=85;");
+        Toast.makeText(this, "⏩ تم تخطي 85 ثانية (المقدمة)", Toast.LENGTH_SHORT).show();
     }
 
     private void showAboutDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("Ø­ÙˆÙ„ ØªØ·Ø¨ÙŠÙ‚ CineJoy TV v1.5")
-            .setMessage("âœ¨ CineJoy Pro Edition â€” Smart TV & Android\n" +
-                        "ðŸ‘¨â€ðŸ’» ØªÙ… Ø§Ù„ØªØ·ÙˆÙŠØ± ÙˆØ§Ù„ØªØ®ØµÙŠØµ Ø¨ÙˆØ§Ø³Ø·Ø©: Dr. Muhammed\n\n" +
-                        "â€¢ ØªØ­ÙƒÙ… ÙØ§Ø¦Ù‚ Ø¨Ø§Ù„Ù…Ø§ÙˆØ³ Ø§Ù„Ø§ÙØªØ±Ø§Ø¶ÙŠ Ù„Ø§Ø®ØªÙŠØ§Ø± Ø§Ù„ØªØ±Ø¬Ù…Ø© ÙˆØ¶Ø¨Ø· Ø§Ù„Ø¬ÙˆØ¯Ø© Ø¨Ø¯Ù‚Ø©\n" +
-                        "â€¢ ØªÙØ¹ÙŠÙ„ Ø§Ù„Ù…Ø§ÙˆØ³ ÙÙˆØ±Ø§Ù‹ Ø¨Ø§Ù„Ø¶ØºØ· Ø¹Ù„Ù‰ Ø§Ù„Ø´Ø§Ø±Ø©ØŒ Ø£Ùˆ Ø§Ù„Ø²Ø± Ø§Ù„Ø£ØµÙØ±ØŒ Ø£Ùˆ Ø¶ØºØ·Ø© Ù…Ø·ÙˆÙ„Ø© Ø¹Ù„Ù‰ OK\n" +
-                        "â€¢ Ø¯Ø¹Ù… Ø§Ù„ØªÙ†Ù‚Ù„ Ø§Ù„Ø·Ø¨ÙŠØ¹ÙŠ Ø¨Ø§Ù„Ø£Ø³Ù‡Ù… ÙˆØªÙ‚Ø¯ÙŠÙ… ÙˆØªØ£Ø®ÙŠØ± Ø§Ù„ÙÙŠØ¯ÙŠÙˆ\n" +
-                        "â€¢ Ø£Ø¯Ø§Ø¡ Ø³Ø±ÙŠØ¹ ÙˆØ®ÙÙŠÙ Ø¨Ø¯ÙˆÙ† Ø£ÙŠ Ø§Ø³ØªÙ‡Ù„Ø§Ùƒ Ø²Ø§Ø¦Ø¯ Ù„Ù„Ø°Ø§ÙƒØ±Ø©")
-            .setPositiveButton("Ø­Ø³Ù†Ø§Ù‹", null)
+            .setTitle("حول تطبيق CineJoy TV v2.0")
+            .setMessage("✨ CineJoy Pro Edition — Smart TV & Android\n"
+                + "👨‍💻 تم التطوير والتخصيص بواسطة: Dr. Muhammed\n\n"
+                + "• محرك تنقل مكاني جديد يعمل مع كل الأزرار والقوائم\n"
+                + "• مؤشر ماوس أسرع بنقرات حقيقية داخل المشغلات والإطارات\n"
+                + "• استرداد تلقائي بعد أعطال محرك العرض (بدون شاشة سوداء)\n"
+                + "• حظر موسّع للإعلانات وتحميل أسرع للصفحات\n"
+                + "• صفحة خطأ عربية واضحة عند انقطاع الاتصال")
+            .setPositiveButton("حسناً", null)
             .show();
-    }
-
-    /**
-     * Injects Subtitle, Player Controls, and Clean TV Navigation Enhancements
-     */
-    private void injectTvSubtitleAndControlEnhancements() {
-        if (webView == null) return;
-
-        String tvEngineJs = "(function() {" +
-            "  if (window.__cinejoyTvInjected) return;" +
-            "  window.__cinejoyTvInjected = true;" +
-
-            // 1. High contrast crisp outline for TV navigation
-            "  var style = document.createElement('style');" +
-            "  style.id = 'cinejoy-tv-styles';" +
-            "  style.textContent = `" +
-            "    :focus, .tv-focused, [data-focus=\"true\"] {" +
-            "      outline: 3px solid #95FF50 !important;" +
-            "      outline-offset: 2px !important;" +
-            "      border-radius: 6px !important;" +
-            "    }" +
-            "    * {" +
-            "      -webkit-tap-highlight-color: rgba(149, 255, 80, 0.3) !important;" +
-            "    }" +
-            "  `;" +
-            "  (document.head || document.documentElement).appendChild(style);" +
-
-            // 2. Block Popups
-            "  window.open = function() { return null; };" +
-            "  try { localStorage.setItem('addies', 'false'); } catch(e){}" +
-
-            // 3. Make interactive elements, subtitle options, and dropdown items focusable
-            "  function scanAndEnableFocus() {" +
-            "    var selectors = 'a, button, input, select, [role=\"button\"], [role=\"menuitem\"], [role=\"option\"], .art-subtitle, .art-setting, .vjs-menu-item, li[data-val], .dropdown-item';" +
-            "    var els = document.querySelectorAll(selectors);" +
-            "    for (var i = 0; i < els.length; i++) {" +
-            "      if (!els[i].hasAttribute('tabindex')) els[i].setAttribute('tabindex', '0');" +
-            "    }" +
-            "  }" +
-            "  setTimeout(scanAndEnableFocus, 1000);" +
-            "  document.addEventListener('click', function() { setTimeout(scanAndEnableFocus, 300); }, true);" +
-
-            "})();";
-
-        webView.evaluateJavascript(tvEngineJs, null);
     }
 
     private void hideSystemUI() {
         View decorView = getWindow().getDecorView();
         decorView.setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE |
-            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
-            View.SYSTEM_UI_FLAG_FULLSCREEN |
-            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
         );
     }
 
     private void showExitConfirmDialog() {
         new AlertDialog.Builder(this)
-            .setTitle("ØªØ·Ø¨ÙŠÙ‚ CineJoy")
-            .setMessage("Ù‡Ù„ ØªØ±ÙŠØ¯ Ø­Ù‚Ø§Ù‹ Ø§Ù„Ø®Ø±ÙˆØ¬ Ù…Ù† Ø§Ù„ØªØ·Ø¨ÙŠÙ‚ØŸ")
-            .setPositiveButton("Ù†Ø¹Ù… (Ø®Ø±ÙˆØ¬)", new DialogInterface.OnClickListener() {
+            .setTitle("تطبيق CineJoy")
+            .setMessage("هل تريد حقاً الخروج من التطبيق؟")
+            .setPositiveButton("نعم (خروج)", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
                     finish();
                 }
             })
-            .setNegativeButton("Ø¥Ù„ØºØ§Ø¡", new DialogInterface.OnClickListener() {
+            .setNegativeButton("إلغاء", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
                     hideSystemUI();
@@ -983,14 +1116,14 @@ public class MainActivity extends AppCompatActivity {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) {
             hideSystemUI();
-            if (webView != null) webView.requestFocus();
+            if (webView != null && !isMouseModeActive) webView.requestFocus();
         }
     }
 
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        webView.saveState(outState);
+        if (webView != null) webView.saveState(outState);
     }
 
     @Override
@@ -1010,7 +1143,7 @@ public class MainActivity extends AppCompatActivity {
         super.onResume();
         if (webView != null) {
             webView.onResume();
-            webView.requestFocus();
+            if (!isMouseModeActive) webView.requestFocus();
         }
         hideSystemUI();
     }
@@ -1023,9 +1156,10 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
-        if (dpadLongPressRunnable != null) {
-            dpadHandler.removeCallbacks(dpadLongPressRunnable);
+        if (okLongPressRunnable != null) {
+            mainHandler.removeCallbacks(okLongPressRunnable);
         }
+        mainHandler.removeCallbacksAndMessages(null);
         if (webView != null) {
             webView.destroy();
         }

@@ -184,6 +184,11 @@ public class MainActivity extends AppCompatActivity {
             settings.setUserAgentString(defaultUa.replace("; wv", ""));
         }
 
+        // Allows live DOM inspection over adb (devtools protocol) for diagnosis
+        try {
+            WebView.setWebContentsDebuggingEnabled(true);
+        } catch (Exception ignored) {}
+
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
@@ -354,6 +359,16 @@ public class MainActivity extends AppCompatActivity {
                 hideSplashScreen();
             }
         }, 6000);
+
+        // SPA pages navigate without onPageFinished: re-inject (guarded, idempotent) periodically
+        Runnable engineKeepAlive = new Runnable() {
+            @Override
+            public void run() {
+                injectTvEngine();
+                mainHandler.postDelayed(this, 3000);
+            }
+        };
+        mainHandler.postDelayed(engineKeepAlive, 3000);
     }
 
     private boolean handleUrlOverride(WebView view, String url) {
@@ -516,6 +531,45 @@ public class MainActivity extends AppCompatActivity {
             + "return 'click';"
             + "};"
             + "try{var probe=cands();console.log('CINEJOY_ENGINE_LOADED candidates='+probe.length);}catch(elog){console.log('CINEJOY_ENGINE_PROBE_ERR='+elog);}"
+            + "try{"
+            + "var dd=document.elementFromPoint(window.innerWidth/2,window.innerHeight/2);"
+            + "var chain=[];var nn=dd;"
+            + "while(nn&&chain.length<6){"
+            + "var ss=window.getComputedStyle(nn);"
+            + "chain.push(nn.tagName+(nn.id?'#'+nn.id:'')+' pe='+ss.pointerEvents+' z='+ss.zIndex);"
+            + "nn=nn.parentElement;}"
+            + "console.log('CINEJOY_TOPCHAIN: '+(chain.join(' > ')||'null'));"
+            + "}catch(e3){console.log('CINEJOY_TOPCHAIN_ERR='+e3);}"
+            + "try{"
+            + "var ADPATS=['doubleclick.net','google-analytics','googlesyndication','googletagservices',"
+            + "'adservice.google','pagead2','popads','popcash','adsterra','propellerads','propellerclick',"
+            + "'monetag','mtag.pw','clickadu','hilltopads','ad-maven','adcash','onclickads','onclckds',"
+            + "'exoclick','trafficfactory','juicyads','trafficstars','tsyndicate','adnxs','adform','criteo',"
+            + "'taboola','outbrain','histats','mc.yandex','cloudflareinsights','quantserve',"
+            + "'scorecardresearch','zedo','smartadserver','pubmatic','rubiconproject','openx','indexww',"
+            + "'bidswitch','casalemedia','sharethrough','spotxchange','teads.tv','media.net','revcontent',"
+            + "'mgid','adskeeper','onclickalgo','rtb','popunder','admaven'];"
+            + "function neutralizeOverlays(){"
+            + "try{"
+            + "var ifs=document.querySelectorAll('iframe');"
+            + "for(var i=0;i<ifs.length;i++){"
+            + "var f=ifs[i];"
+            + "var r=f.getBoundingClientRect();"
+            + "var big=r.width>=window.innerWidth*0.85&&r.height>=window.innerHeight*0.85;"
+            + "if(!big)continue;"
+            + "var src='';try{src=(f.getAttribute('src')||'');}catch(se){}"
+            + "var sl=src.toLowerCase();"
+            + "var bad=false;"
+            + "for(var j=0;j<ADPATS.length;j++){if(sl.indexOf(ADPATS[j])!==-1){bad=true;break;}}"
+            + "if(!bad&&(sl===''||sl.indexOf('about:blank')!==-1||f.hasAttribute('srcdoc')))bad=true;"
+            + "if(bad){"
+            + "f.style.pointerEvents='none';f.style.zIndex='-1';"
+            + "console.log('CINEJOY_OVERLAY_NEUTRALIZED src='+src.substring(0,120));}"
+            + "}"
+            + "}catch(e4){}}"
+            + "neutralizeOverlays();"
+            + "window.__cinejoyOverlayTimer=setInterval(neutralizeOverlays,2000);"
+            + "}catch(eo){console.log('CINEJOY_OVERLAY_INIT_ERR='+eo);}"
             + "})();";
 
         webView.evaluateJavascript(js, null);
@@ -796,7 +850,7 @@ public class MainActivity extends AppCompatActivity {
         // 3. Mouse mode: arrows move the cursor with real acceleration
         if (isMouseModeActive) {
             int repeat = event.getRepeatCount();
-            float step = Math.min(110f, 20f + repeat * 6f);
+            float step = Math.min(150f, 45f + repeat * 10f);
 
             switch (keyCode) {
                 case KeyEvent.KEYCODE_DPAD_UP:

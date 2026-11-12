@@ -54,6 +54,19 @@
 
         </activity>
 
+        <!-- Ø´Ø§Ø´Ø© Ø§Ù„Ø³ÙƒÙˆÙ†: Ù…ÙˆØ§Ù‚ÙŠØª Ø§Ù„ØµÙ„Ø§Ø© + Ø§Ù„Ø³Ø§Ø¹Ø© (ØªÙÙØ¹Ù‘Ù„ Ù…Ù† Ø¥Ø¹Ø¯Ø§Ø¯Ø§Øª Ø´Ø§Ø´Ø© Ø§Ù„ØªÙˆÙ‚Ù) -->
+        <service
+            android:name=".PrayerDream"
+            android:exported="true"
+            android:label="@string/dream_name"
+            android:permission="android.permission.BIND_DREAM_SERVICE"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>

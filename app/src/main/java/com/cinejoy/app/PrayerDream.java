@@ -144,7 +144,7 @@ public class PrayerDream extends DreamService {
             timeViews[i] = time;
 
             rows.addView(row, new LinearLayout.LayoutParams(
-                    LinearLayout.LayoutParams.MATCH_PARENT, vp(70 - (i == 1 ? 14 : 0))));
+                    LinearLayout.LayoutParams.MATCH_PARENT, 70 - (i == 1 ? 14 : 0)));
         }
         root.addView(rows);
 
